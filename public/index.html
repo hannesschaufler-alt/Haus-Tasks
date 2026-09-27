@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2f6fed">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Haus-Tasks">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="shortcut icon" href="favicon.ico">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>Haus-Tasks</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1c2230; --muted: #667085; --line: #e3e6ec;
+    --accent: #2f6fed; --accent-text: #ffffff; --danger: #d92d20; --ok: #12a150; --chip: #eef1f6;
+    --radius: 12px; --shadow: 0 1px 2px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c; --card: #1b1f29; --text: #e8ebf2; --muted: #98a2b3; --line: #2b3140;
+      --accent: #5b8cff; --accent-text: #0e1420; --danger: #f97066; --ok: #47cd89; --chip: #262c3a;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, "Segoe UI", sans-serif; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  header a.brand { font-size: 20px; font-weight: 700; color: inherit; text-decoration: none; }
+  .sync { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.ok { background: var(--ok); } .dot.err { background: var(--danger); }
+  button { font: inherit; cursor: pointer; }
+  .btn { border: 1px solid var(--line); background: var(--card); color: var(--text); padding: 8px 14px; border-radius: 10px; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .btn.danger { color: var(--danger); }
+  .btn.small { padding: 4px 10px; font-size: 13px; }
+  .icon-btn { border: none; background: none; color: var(--muted); padding: 6px; border-radius: 8px; line-height: 1; }
+  .icon-btn:hover { color: var(--danger); background: var(--chip); }
+  .icon-btn.invite { text-decoration: none; }
+  .icon-btn.invite:hover { color: var(--accent); }
+
+  .navrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .navblock { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--card);
+    border: 1px solid var(--line); border-radius: var(--radius); color: inherit; text-decoration: none; box-shadow: var(--shadow); font-weight: 600; }
+  .navblock:hover { border-color: var(--accent); }
+  .navblock span { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .newtask { width: 100%; padding: 14px; font-size: 16px; margin-bottom: 20px; }
+
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; }
+  .toolbar label { color: var(--muted); font-size: 13px; }
+  .filters { margin-bottom: 14px; }
+  .filters .group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .filters .group > b { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; width: 74px; }
+  .chip { border: 1px solid var(--line); background: var(--chip); color: var(--text); padding: 3px 10px; border-radius: 999px; font-size: 13px; }
+  .chip.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  select, input, textarea { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+  .list { display: flex; flex-direction: column; gap: 8px; }
+  .date { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 58px; padding: 5px 0; border-radius: 10px;
+    background: var(--chip); line-height: 1.1; text-align: center; }
+  .date .day { font-size: 24px; font-weight: 700; }
+  .date .wd, .date .mon { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .date.soon { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+  .date.late { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+  .date.soon .wd, .date.soon .mon, .date.late .wd, .date.late .mon { color: inherit; }
+  .date.done, .date.none { opacity: .55; }
+  .task { display: grid; grid-template-columns: auto auto 1fr auto; gap: 12px; align-items: center; background: var(--card);
+    border: 1px solid var(--line); border-left: 6px solid var(--c, var(--line)); border-radius: var(--radius); padding: 10px 12px; box-shadow: var(--shadow); }
+  .task.done .title { text-decoration: line-through; color: var(--muted); }
+  .task input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; }
+  .task .main { min-width: 0; cursor: pointer; }
+  .title { font-weight: 600; overflow-wrap: anywhere; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 3px; font-size: 13px; color: var(--muted); align-items: center; }
+  .badge { padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; }
+  .badge.hoch { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+  .badge.late { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); font-weight: 600; }
+  .badge.today { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); font-weight: 600; }
+  .empty { text-align: center; color: var(--muted); padding: 32px 0; }
+
+  .group-card { margin-bottom: 20px; }
+  .group-card h2 { display: flex; align-items: center; gap: 10px; font-size: 17px; margin: 0 0 8px; }
+  .group-card h2 span.count { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .swatch { width: 14px; height: 14px; border-radius: 50%; display: inline-block; background: var(--c); }
+  .backlink { color: var(--accent); text-decoration: none; font-size: 14px; }
+  h1 { font-size: 22px; margin: 6px 0 16px; }
+
+  dialog { border: 1px solid var(--line); border-radius: 16px; background: var(--card); color: var(--text); width: min(560px, calc(100vw - 24px)); padding: 0; }
+  dialog::backdrop { background: rgba(10,14,22,.5); }
+  form { padding: 20px; display: grid; gap: 14px; }
+  form h3 { margin: 0; font-size: 18px; }
+  .field { display: grid; gap: 4px; }
+  .field > label { font-size: 13px; color: var(--muted); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .inline input[type=number] { width: 72px; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+  .sw { width: 28px; height: 28px; border-radius: 50%; border: 3px solid transparent; background: var(--c); padding: 0; }
+  .sw.on { border-color: var(--text); }
+  .actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
+  .actions .right { display: flex; gap: 8px; }
+  .error { color: var(--danger); font-size: 13px; min-height: 1em; }
+  .hint { color: var(--muted); font-size: 13px; }
+
+  /* Einrichtungsbildschirme: Anmeldung, Kalender-ID */
+  .step { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; margin-top: 20px; display: grid; gap: 14px; max-width: 440px; }
+  .step h1 { margin: 0; font-size: 20px; }
+  .step .lead { color: var(--muted); margin: 0; }
+
+  .badge.chk { border: none; color: inherit; cursor: pointer; font: inherit; font-size: 12px; }
+  .badge.chk:hover { outline: 1px solid var(--accent); }
+  .badge.chk.ok { background: color-mix(in srgb, var(--ok) 22%, transparent); color: var(--ok); }
+  .chk-list { list-style: none; margin: 8px 0 2px; padding: 0; display: grid; gap: 6px; cursor: default; }
+  .chk-list label { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+  .chk-list input[type=checkbox] { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--accent); }
+  .chk-list li.done span { text-decoration: line-through; color: var(--muted); }
+  .chk-rows { display: grid; gap: 6px; }
+  .chk-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; }
+  .chk-row input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+  .chk-add { justify-self: start; margin-top: 6px; }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; z-index: 10; }
+  dialog { max-height: calc(100dvh - 24px); overflow-y: auto; }
+  .wrap { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+
+  /* Handy: größere Tippflächen, 16px in Feldern (sonst zoomt iOS beim Antippen), kompaktere Zeilen */
+  @media (max-width: 520px) {
+    .wrap { padding-top: max(12px, env(safe-area-inset-top)); }
+    .row2 { grid-template-columns: 1fr; }
+    .filters .group > b { width: 100%; }
+    input, select, textarea { font-size: 16px; }
+    .btn { padding: 10px 14px; }
+    .btn.small { padding: 7px 12px; }
+    .icon-btn { padding: 10px; }
+    .task { grid-template-columns: auto auto 1fr auto; gap: 10px; padding: 10px; }
+    .task input[type=checkbox] { width: 26px; height: 26px; }
+    .date { width: 50px; }
+    .date .day { font-size: 21px; }
+    .toolbar select { flex: 1; min-width: 0; }
+    header { flex-wrap: wrap; }
+    .group-card h2 { flex-wrap: wrap; }
+    form { padding: 16px; }
+    .sw { width: 34px; height: 34px; }
+    .actions { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="brand" href="#/">🏠 Haus-Tasks</a>
+    <div class="sync">
+      <a class="icon-btn invite" href="haushalt.html" title="Haushalt einladen">👪</a>
+      <span class="dot" id="syncDot"></span><span id="syncText">…</span><button class="btn small" id="syncBtn">Sync</button>
+      <button class="icon-btn" id="signOutBtn" title="Bei Google abmelden">⎋</button>
+    </div>
+  </header>
+  <main id="view"></main>
+</div>
+
+<dialog id="dlg"><form id="form" method="dialog"></form></dialog>
+
+<!-- Unterbau: Serienberechnung, Regeln fürs lokale Anwenden von Änderungen, Sync-Algorithmus gegen Google,
+     Google-Anmeldung, Google-Calendar-Zugriff, IndexedDB-/Warteschlangen-Anbindung. Reihenfolge wichtig
+     (jedes baut aufs vorige auf). -->
+<script src="recurrence.js"></script>
+<script src="offline-logic.js"></script>
+<script src="sync-core.js"></script>
+<script src="google-config.js"></script>
+<script src="auth.js"></script>
+<script src="gcal-remote.js"></script>
+<script src="offline.js"></script>
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const WEEKDAYS = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+const PRIO_RANK = { hoch: 0, mittel: 1, niedrig: 2 };
+const state = {
+  tasks: [], cfg: null, status: null, cats: new Set(), locs: new Set(), showDone: false, sort: 'due', expanded: new Set(),
+  lastSyncAt: null, lastSyncError: null, online: true,
+};
+
+// Elemente ohne innerHTML bauen, damit Nutzereingaben nie als Markup gelten.
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === false || v == null) continue;
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k === 'style') e.setAttribute('style', v);
+    else if (k in e && k !== 'list') e[k] = v;
+    else e.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) e.append(kid.nodeType ? kid : document.createTextNode(kid));
+  return e;
+}
+
+// Reicht ausstehende lokale Änderungen sofort nach, falls die Verbindung inzwischen wieder da ist,
+// ohne bei jeder einzelnen Aktion einen vollen Sync anzustoßen.
+function kickSync() {
+  Offline.pendingCount().then((n) => { if (n > 0) syncNow(true); });
+}
+
+// Nur tatsächlich geänderte Felder gehen in einen Patch (nicht das ganze Formular), damit eine
+// Bearbeitung nie unbeachtet gebliebene Felder überschreibt, die inzwischen z. B. über ein anderes
+// Gerät geändert wurden. sync-core.js führt das beim Senden konfliktsicher mit Googles aktuellem Stand zusammen.
+function diffPatch(original, body) {
+  const patch = {};
+  for (const k of Object.keys(body)) {
+    if (JSON.stringify(body[k]) !== JSON.stringify(original?.[k])) patch[k] = body[k];
+  }
+  return patch;
+}
+
+function toast(msg) {
+  const t = h('div', { class: 'toast' }, msg);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+const hex = (id) => state.cfg.colors[id]?.hex || '#9e9e9e';
+const todayStr = () => new Date().toLocaleDateString('sv-SE');
+const dayDiff = (iso) => Math.round((Date.parse(iso + 'T00:00:00Z') - Date.parse(todayStr() + 'T00:00:00Z')) / 864e5);
+const fmtDate = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
+
+// Das Datum steht groß als Kalenderkachel links an der Zeile; hier nur der Hinweis „überfällig / heute / morgen“.
+function dueBadge(t) {
+  if (!t.due_date || t.done) return null;
+  const d = dayDiff(t.due_date);
+  if (d < 0) return h('span', { class: 'badge late' }, `${-d} ${d === -1 ? 'Tag' : 'Tage'} überfällig`);
+  if (d === 0) return h('span', { class: 'badge today' }, 'Heute fällig');
+  if (d === 1) return h('span', { class: 'badge today' }, 'Morgen fällig');
+  return null;
+}
+
+function dateTile(t) {
+  if (!t.due_date) return h('div', { class: 'date none', title: 'Kein Datum' }, h('span', { class: 'day' }, '–'), h('span', { class: 'mon' }, 'offen'));
+  const d = new Date(t.due_date + 'T12:00:00');
+  const diff = dayDiff(t.due_date);
+  const cls = t.done ? ' done' : diff < 0 ? ' late' : diff <= 1 ? ' soon' : '';
+  const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? ` ’${String(d.getFullYear()).slice(2)}` : '';
+  return h('div', { class: 'date' + cls, title: fmtDate(t.due_date) },
+    h('span', { class: 'wd' }, d.toLocaleDateString('de-DE', { weekday: 'short' }).replace('.', '')),
+    h('span', { class: 'day' }, String(d.getDate())),
+    h('span', { class: 'mon' }, d.toLocaleDateString('de-DE', { month: 'short' }).replace('.', '') + yearSuffix));
+}
+
+function describeRule(r) {
+  if (!r) return '';
+  const nth = { 1: '1.', 2: '2.', 3: '3.', 4: '4.', 5: '5.', '-1': 'letzten' };
+  const n = r.interval > 1 ? r.interval : 1;
+  if (r.type === 'weekly') return n > 1 ? `alle ${n} Wochen` : 'wöchentlich';
+  if (r.type === 'monthly_weekday') return `${n > 1 ? `alle ${n} Monate: jeden` : 'jeden'} ${nth[r.nth]} ${WEEKDAYS[r.weekday]}${n > 1 ? '' : ' im Monat'}`;
+  if (r.type === 'monthly_day') return n > 1 ? `alle ${n} Monate am ${r.day}.` : `jeden ${r.day}. im Monat`;
+  if (r.type === 'yearly') return n > 1 ? `alle ${n} Jahre` : 'jährlich';
+  return '';
+}
+
+// --- Sortieren & Filtern ---
+const dueCmp = (a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999');
+const prioCmp = (a, b) => PRIO_RANK[a.priority] - PRIO_RANK[b.priority];
+const SORTS = {
+  due: { label: 'Fälligkeit, dann Priorität', fn: (a, b) => dueCmp(a, b) || prioCmp(a, b) || a.title.localeCompare(b.title) },
+  prio: { label: 'Priorität, dann Fälligkeit', fn: (a, b) => prioCmp(a, b) || dueCmp(a, b) || a.title.localeCompare(b.title) },
+  title: { label: 'Titel A–Z', fn: (a, b) => a.title.localeCompare(b.title) },
+  cat: { label: 'Kategorie', fn: (a, b) => (a.category || '~').localeCompare(b.category || '~') || dueCmp(a, b) },
+};
+
+function sorted(list) {
+  const open = list.filter((t) => !t.done).sort(SORTS[state.sort].fn);
+  const done = list.filter((t) => t.done).sort((a, b) => (b.done_at || '').localeCompare(a.done_at || ''));
+  return state.showDone ? [...open, ...done] : open;
+}
+
+// --- Task-Zeile ---
+function taskRow(t) {
+  const rule = describeRule(t.recurrence);
+  return h('div', { class: 'task' + (t.done ? ' done' : ''), style: `--c:${hex(t.color)}` },
+    h('input', { type: 'checkbox', checked: t.done, title: t.done ? 'Wieder öffnen' : 'Abhaken', onchange: (e) => toggleDone(t, e.target.checked) }),
+    dateTile(t),
+    h('div', { class: 'main', onclick: () => openForm(t) },
+      h('div', { class: 'title' }, t.title),
+      h('div', { class: 'meta' },
+        dueBadge(t),
+        rule && h('span', { title: 'Serie' }, '🔁 ' + rule),
+        t.category && h('span', { class: 'badge' }, t.category),
+        t.location && h('span', { class: 'badge' }, '📍 ' + t.location),
+        h('span', { class: 'badge ' + (t.priority === 'hoch' ? 'hoch' : '') }, 'Prio ' + t.priority),
+        t.notes && h('span', { title: t.notes }, '📝'),
+        t.checklist.length > 0 && checklistBadge(t)),
+      state.expanded.has(t.id) && t.checklist.length > 0 && checklistView(t)),
+    h('button', { class: 'icon-btn', title: 'Löschen', onclick: () => removeTask(t) }, '🗑'));
+}
+
+// Checkliste („Sub-Tasks light“): Fortschritt als Badge, Klick klappt die Punkte zum direkten Abhaken auf.
+function checklistBadge(t) {
+  const done = t.checklist.filter((i) => i.done).length;
+  const open = state.expanded.has(t.id);
+  return h('button', {
+    class: 'badge chk' + (done === t.checklist.length ? ' ok' : ''),
+    title: open ? 'Checkliste einklappen' : 'Checkliste aufklappen',
+    onclick: (e) => { e.stopPropagation(); open ? state.expanded.delete(t.id) : state.expanded.add(t.id); render(); },
+  }, `☑ ${done}/${t.checklist.length} ${open ? '▴' : '▾'}`);
+}
+
+function checklistView(t) {
+  return h('ul', { class: 'chk-list', onclick: (e) => e.stopPropagation() },
+    t.checklist.map((item, i) => h('li', { class: item.done ? 'done' : '' },
+      h('label', {}, h('input', { type: 'checkbox', checked: item.done, onchange: (e) => toggleItem(t, i, e.target.checked) }), h('span', {}, item.text)))));
+}
+
+async function toggleItem(t, index, done) {
+  const checklist = t.checklist.map((item, i) => (i === index ? { ...item, done } : item));
+  try {
+    const updated = await Offline.mutate('task', 'update', { id: t.id, patch: { checklist } });
+    state.tasks = state.tasks.map((x) => (x.id === updated.id ? updated : x));
+    render();
+    kickSync();
+  } catch (e) { toast(e.message); reload(); }
+}
+
+async function toggleDone(t, done) {
+  try {
+    await Offline.mutate('task', 'done', { id: t.id, done });
+    await reload();
+    kickSync();
+  } catch (e) { toast(e.message); reload(); }
+}
+
+async function removeTask(t) {
+  if (!confirm(`„${t.title}“ löschen? Der Kalendereintrag in Google wird ebenfalls gelöscht.`)) return;
+  try {
+    await Offline.mutate('task', 'delete', { id: t.id });
+    await reload();
+    kickSync();
+  } catch (e) { toast(e.message); }
+}
+
+function taskList(list, emptyText) {
+  const rows = sorted(list);
+  return h('div', { class: 'list' }, rows.length ? rows.map(taskRow) : h('div', { class: 'empty' }, emptyText));
+}
+
+// --- Seiten ---
+function doneToggle() {
+  return h('label', {}, h('input', { type: 'checkbox', checked: state.showDone, onchange: (e) => { state.showDone = e.target.checked; render(); } }), ' Erledigte anzeigen');
+}
+
+function chipGroup(label, names, set) {
+  return h('div', { class: 'group' }, h('b', {}, label),
+    names.map((n) => h('button', { class: 'chip' + (set.has(n) ? ' on' : ''), onclick: () => { set.has(n) ? set.delete(n) : set.add(n); render(); } }, n)));
+}
+
+function homePage() {
+  const open = state.tasks.filter((t) => !t.done).length;
+  const filtered = state.tasks.filter((t) => (!state.cats.size || state.cats.has(t.category)) && (!state.locs.size || state.locs.has(t.location)));
+  return h('div', {},
+    h('div', { class: 'navrow' },
+      h('a', { class: 'navblock', href: '#/kategorien' }, 'Kategorien', h('span', {}, `${Object.keys(state.cfg.categories).length} →`)),
+      h('a', { class: 'navblock', href: '#/orte' }, 'Orte', h('span', {}, `${state.cfg.locations.length} →`))),
+    h('button', { class: 'btn primary newtask', onclick: () => openForm(null) }, '＋ Neuen Task erstellen'),
+    h('div', { class: 'toolbar' },
+      h('strong', {}, `Anstehend (${open} offen)`),
+      h('span', { style: 'flex:1' }),
+      h('label', {}, 'Sortierung '),
+      h('select', { onchange: (e) => { state.sort = e.target.value; render(); } },
+        Object.entries(SORTS).map(([k, s]) => h('option', { value: k, selected: k === state.sort }, s.label))),
+      doneToggle()),
+    h('div', { class: 'filters' },
+      chipGroup('Kategorie', Object.keys(state.cfg.categories), state.cats),
+      chipGroup('Ort', state.cfg.locations, state.locs)),
+    taskList(filtered, state.tasks.length ? 'Keine Tasks für diese Filter.' : 'Noch keine Tasks. Leg den ersten an!'));
+}
+
+// Kategorien und Orte: gleiche Seite, beide mit Anlegen, Umbenennen und Löschen.
+const GROUP_TEXT = {
+  category: { newBtn: '＋ Neue Kategorie', none: 'Ohne Kategorie' },
+  location: { newBtn: '＋ Neuer Ort', none: 'Ohne Ort' },
+};
+
+function groupPage(title, names, key, colorOf) {
+  const groups = [...names, null].map((name) => ({ name, list: state.tasks.filter((t) => (t[key] || null) === name) }))
+    .filter((g) => g.name !== null || g.list.length);
+  return h('div', {},
+    h('a', { class: 'backlink', href: '#/' }, '← Zurück'),
+    h('h1', {}, title),
+    h('div', { class: 'toolbar' },
+      h('button', { class: 'btn primary', onclick: () => openGroupForm(key, null) }, GROUP_TEXT[key].newBtn),
+      h('span', { style: 'flex:1' }), doneToggle()),
+    groups.map((g) => h('section', { class: 'group-card', style: `--c:${colorOf(g.name)}` },
+      h('h2', {}, h('span', { class: 'swatch' }), g.name || GROUP_TEXT[key].none,
+        h('span', { class: 'count' }, `${g.list.filter((t) => !t.done).length} offen`),
+        g.name && h('button', { class: 'btn small', style: 'margin-left:auto', onclick: () => openGroupForm(key, g.name) }, '✎ Bearbeiten')),
+      taskList(g.list, 'Keine offenen Tasks.'))));
+}
+
+function render() {
+  const route = location.hash.replace(/^#\/?/, '');
+  const view = $('#view');
+  if (!state.cfg) return;
+  view.replaceChildren(
+    route === 'kategorien' ? groupPage('Kategorien', Object.keys(state.cfg.categories), 'category', (n) => n ? hex(state.cfg.categories[n]) : '#9e9e9e')
+    : route === 'orte' ? groupPage('Orte', state.cfg.locations, 'location', () => 'var(--accent)')
+    : homePage());
+  const s = state.status;
+  $('#syncDot').className = 'dot ' + (!s || s.offline ? '' : state.lastSyncError ? 'err' : 'ok');
+  $('#syncText').textContent = !s ? '' : s.offline ? `Nicht erreichbar${s.pending ? ` · ${s.pending} Änderung(en) warten` : ''}`
+    : state.lastSyncError ? 'Sync-Fehler'
+    : state.lastSyncAt ? 'Sync ' + state.lastSyncAt.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+    : 'Noch nicht synchronisiert';
+  $('#syncText').title = state.lastSyncError || '';
+}
+
+// --- Formular ---
+// Farbwahl aus Googles Event-Farben. Graphit (8) ist für „erledigt“ reserviert, bleibt aber wählbar, wenn ein Task sie schon hat.
+function makeSwatches(initial, onPick) {
+  let color = initial;
+  const el = h('div', { class: 'swatches' });
+  const paint = () => el.replaceChildren(...Object.entries(state.cfg.colors).filter(([id]) => id !== '8' || color === '8').map(([id, c]) =>
+    h('button', { type: 'button', class: 'sw' + (id === color ? ' on' : ''), style: `--c:${c.hex}`, title: c.name, onclick: () => { color = id; paint(); onPick?.(); } })));
+  paint();
+  return { el, get: () => color, set: (id) => { color = id; paint(); } };
+}
+
+const GROUP_KIND = {
+  category: { cfgKey: 'categories', filter: () => state.cats, singular: 'Kategorie', article: 'Neue', placeholder: 'z. B. Reinigung' },
+  location: { cfgKey: 'locations', filter: () => state.locs, singular: 'Ort', article: 'Neuer', placeholder: 'z. B. Carport' },
+};
+
+// Anlegen/Bearbeiten/Löschen einer Kategorie (mit Farbe) oder eines Ortes.
+function openGroupForm(kind, name) {
+  const k = GROUP_KIND[kind];
+  const isNew = name == null;
+  const nameInput = h('input', { type: 'text', value: name || '', required: true, maxLength: 40, placeholder: k.placeholder });
+  const picker = kind === 'category' ? makeSwatches(isNew ? '9' : state.cfg.categories[name]) : null;
+  const err = h('div', { class: 'error' });
+  const form = $('#form');
+
+  // Neue Liste übernehmen und Filter bereinigen, die auf einen umbenannten/gelöschten Namen zeigten.
+  const applyList = (list) => {
+    state.cfg[k.cfgKey] = list;
+    const names = Array.isArray(list) ? list : Object.keys(list);
+    for (const n of [...k.filter()]) if (!names.includes(n)) k.filter().delete(n);
+  };
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const body = kind === 'category' ? { name: nameInput.value, color: picker.get() } : { name: nameInput.value };
+      // Nur die tatsächlich geänderten Felder senden, damit z. B. ein reines Umfärben nicht versehentlich
+      // einen zwischenzeitlich anderswo geänderten Namen zurücksetzt (und umgekehrt).
+      const original = kind === 'category' ? { name, color: state.cfg.categories[name] } : { name };
+      const payload = isNew ? body : diffPatch(original, body);
+      const list = await Offline.mutate(kind, isNew ? 'create' : 'update', isNew ? payload : { id: name, patch: payload });
+      applyList(list);
+      $('#dlg').close();
+      await reload();
+      kickSync();
+    } catch (ex) { err.textContent = ex.message; }
+  };
+
+  async function remove() {
+    const n = state.tasks.filter((t) => t[kind] === name).length;
+    if (!confirm(`${k.singular} „${name}“ löschen?${n ? ` Die ${n} Tasks bleiben erhalten, haben danach aber keine ${k.singular === 'Ort' ? 'Ortsangabe' : 'Kategorie'}.` : ''}`)) return;
+    try {
+      const list = await Offline.mutate(kind, 'delete', { id: name });
+      applyList(list);
+      $('#dlg').close();
+      await reload();
+      kickSync();
+    } catch (ex) { err.textContent = ex.message; }
+  }
+
+  form.replaceChildren(
+    h('h3', {}, isNew ? `${k.article} ${k.singular}` : `${k.singular} bearbeiten`),
+    h('div', { class: 'field' }, h('label', {}, 'Name'), nameInput),
+    picker && h('div', { class: 'field' }, h('label', {}, 'Standardfarbe für neue Tasks'), picker.el),
+    !isNew && h('div', { class: 'hint' }, (kind === 'category' ? 'Bestehende Tasks behalten ihre Farbe. ' : '') + 'Beim Umbenennen wandern die Tasks mit.'),
+    err,
+    h('div', { class: 'actions' },
+      isNew ? h('span') : h('button', { type: 'button', class: 'btn danger', onclick: remove }, 'Löschen'),
+      h('div', { class: 'right' },
+        h('button', { type: 'button', class: 'btn', onclick: () => $('#dlg').close() }, 'Abbrechen'),
+        h('button', { type: 'submit', class: 'btn primary' }, 'Speichern'))));
+  $('#dlg').showModal();
+  nameInput.focus();
+}
+
+// Editor für die Checkliste im Formular. Enter legt einen neuen Punkt an, Rücktaste in einem leeren Punkt entfernt ihn,
+// eingefügter mehrzeiliger Text (auch mit „-“, „*“ oder „[ ]“ davor) wird auf mehrere Punkte verteilt.
+function makeChecklistEditor(initial) {
+  const rows = h('div', { class: 'chk-rows' });
+
+  const addRow = (text = '', done = false, { focus = false, after = null } = {}) => {
+    const cb = h('input', { type: 'checkbox', checked: done, title: 'Erledigt' });
+    const input = h('input', { type: 'text', value: text, placeholder: 'Punkt …', maxLength: 200 });
+    const row = h('div', { class: 'chk-row' }, cb, input, h('button', { type: 'button', class: 'icon-btn', title: 'Punkt entfernen', onclick: () => row.remove() }, '✕'));
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault(); // sonst würde das Formular abgeschickt
+        if (input.value.trim()) addRow('', false, { focus: true, after: row });
+      } else if (e.key === 'Backspace' && !input.value) {
+        e.preventDefault();
+        const prev = row.previousElementSibling;
+        row.remove();
+        prev?.querySelector('input[type=text]').focus();
+      }
+    });
+    input.addEventListener('paste', (e) => {
+      const pasted = e.clipboardData?.getData('text') || '';
+      if (input.value || !/\r?\n/.test(pasted)) return; // nur in leere Zeilen verteilen
+      e.preventDefault();
+      const lines = pasted.split(/\r?\n/).map((s) => s.replace(/^\s*(?:[-*•]|\[[ xX]?\])\s*/, '').trim()).filter(Boolean);
+      input.value = lines[0].slice(0, 200);
+      let last = row;
+      for (const line of lines.slice(1)) last = addRow(line.slice(0, 200), false, { after: last });
+    });
+
+    after ? after.after(row) : rows.append(row);
+    if (focus) input.focus();
+    return row;
+  };
+
+  initial.forEach((i) => addRow(i.text, i.done));
+  const el = h('div', {}, rows,
+    h('button', { type: 'button', class: 'btn small chk-add', onclick: () => addRow('', false, { focus: true }) }, '＋ Punkt hinzufügen'));
+  const get = () => [...rows.children]
+    .map((r) => ({ text: r.querySelector('input[type=text]').value.trim(), done: r.querySelector('input[type=checkbox]').checked }))
+    .filter((i) => i.text);
+  return { el, get };
+}
+
+function openForm(task) {
+  const cfg = state.cfg;
+  const t = task || { title: '', due_date: '', category: '', location: '', priority: 'mittel', color: '9', notes: '', recurrence: null };
+  let colorTouched = !!task;
+  const r = t.recurrence;
+
+  const title = h('input', { type: 'text', value: t.title, required: true, placeholder: 'z. B. Steckdose im Flur setzen' });
+  const date = h('input', { type: 'date', value: t.due_date || '' });
+  const cat = h('select', {}, h('option', { value: '' }, '– keine –'), Object.keys(cfg.categories).map((c) => h('option', { value: c, selected: c === t.category }, c)));
+  const loc = h('select', {}, h('option', { value: '' }, '– keiner –'), cfg.locations.map((l) => h('option', { value: l, selected: l === t.location }, l)));
+  const prio = h('select', {}, cfg.priorities.map((p) => h('option', { value: p, selected: p === t.priority }, p)));
+  const notes = h('textarea', { rows: 3 }, t.notes || '');
+  notes.value = t.notes || '';
+  const chk = makeChecklistEditor(t.checklist || []);
+
+  const picker = makeSwatches(t.color, () => { colorTouched = true; });
+  cat.addEventListener('change', () => { if (!colorTouched && cat.value) picker.set(cfg.categories[cat.value]); });
+
+  // Serie
+  const recType = h('select', {},
+    [['', 'Keine Wiederholung'], ['weekly', 'Wöchentlich (alle n Wochen)'], ['monthly_weekday', 'Monatlich: n-ter Wochentag'], ['monthly_day', 'Monatlich: Tag x'], ['yearly', 'Jährlich (alle n Jahre)']]
+      .map(([v, l]) => h('option', { value: v, selected: v === (r?.type || '') }, l)));
+  const interval = h('input', { type: 'number', min: 1, max: 120, value: r?.interval || 1 });
+  const nth = h('select', {}, [[1, '1.'], [2, '2.'], [3, '3.'], [4, '4.'], [-1, 'letzten']].map(([v, l]) => h('option', { value: v, selected: v === (r?.nth ?? 1) }, l)));
+  const wd = h('select', {}, [1, 2, 3, 4, 5, 6, 0].map((i) => h('option', { value: i, selected: i === (r?.weekday ?? 1) }, WEEKDAYS[i])));
+  const mday = h('input', { type: 'number', min: 1, max: 31, value: r?.day || 1 });
+  const recOpts = h('div', { class: 'inline' });
+  const paintRec = () => {
+    const ty = recType.value;
+    recOpts.replaceChildren(...(ty === 'weekly' ? ['Alle ', interval, ' Woche(n)']
+      : ty === 'monthly_weekday' ? ['Alle ', interval, ' Monat(e): jeden ', nth, wd]
+      : ty === 'monthly_day' ? ['Alle ', interval, ' Monat(e) am ', mday, '. Tag']
+      : ty === 'yearly' ? ['Alle ', interval, ' Jahr(e) am Datum des Tasks'] : []));
+  };
+  recType.addEventListener('change', () => {
+    if (date.value && recType.value === 'monthly_weekday' && !task?.recurrence) { const d = new Date(date.value + 'T12:00:00'); wd.value = d.getDay(); nth.value = Math.min(Math.ceil(d.getDate() / 7), 4); }
+    if (date.value && recType.value === 'monthly_day') mday.value = Number(date.value.slice(8));
+    paintRec();
+  });
+  paintRec();
+
+  const err = h('div', { class: 'error' });
+  const form = $('#form');
+
+  async function save(e) {
+    e.preventDefault();
+    const ty = recType.value;
+    const iv = Math.max(1, Number(interval.value) || 1);
+    const recurrence = !ty ? null : ty === 'weekly' ? { type: ty, interval: iv }
+      : ty === 'monthly_weekday' ? { type: ty, interval: iv, nth: Number(nth.value), weekday: Number(wd.value) }
+      : ty === 'monthly_day' ? { type: ty, interval: iv, day: Number(mday.value) } : { type: ty, interval: iv };
+    const body = { title: title.value, due_date: date.value || null, category: cat.value || null, location: loc.value || null,
+      priority: prio.value, color: picker.get(), notes: notes.value, checklist: chk.get(), recurrence };
+    // Bei einer Bearbeitung nur die tatsächlich geänderten Felder senden (siehe diffPatch); beim Neuanlegen
+    // gibt es noch keine Vorversion, da geht das komplette Formular raus.
+    const payload = task ? diffPatch(task, body) : body;
+    try {
+      await Offline.mutate('task', task ? 'update' : 'create', task ? { id: task.id, patch: payload } : { input: payload });
+      $('#dlg').close();
+      await reload();
+      kickSync();
+    } catch (ex) { err.textContent = ex.message; }
+  }
+
+  const field = (label, ...ctl) => h('div', { class: 'field' }, h('label', {}, label), ...ctl);
+  form.onsubmit = save;
+  form.replaceChildren(
+    h('h3', {}, task ? 'Task bearbeiten' : 'Neuer Task'),
+    field('Titel', title),
+    h('div', { class: 'row2' }, field('Datum (leer = nur in der App)', date), field('Wiederholung', recType)),
+    recOpts,
+    h('div', { class: 'row2' }, field('Kategorie', cat), field('Ort', loc)),
+    h('div', { class: 'row2' }, field('Priorität', prio), field('Farbe', picker.el)),
+    field('Notizen', notes),
+    field('Checkliste (Enter = nächster Punkt, mehrzeiligen Text einfügen = mehrere Punkte)', chk.el),
+    err,
+    h('div', { class: 'actions' },
+      task ? h('button', { type: 'button', class: 'btn danger', onclick: async () => { $('#dlg').close(); await removeTask(task); } }, 'Löschen') : h('span'),
+      h('div', { class: 'right' },
+        h('button', { type: 'button', class: 'btn', onclick: () => $('#dlg').close() }, 'Abbrechen'),
+        h('button', { type: 'submit', class: 'btn primary' }, 'Speichern'))));
+  $('#dlg').showModal();
+  title.focus();
+}
+
+// --- Feste App-Konstanten: liegen bei niemandem auf einem Server, gelten für alle Installationen gleich ---
+const PRIORITIES = ['hoch', 'mittel', 'niedrig'];
+const COLORS = {
+  1: { name: 'Lavendel', hex: '#a4bdfc' }, 2: { name: 'Salbei', hex: '#7ae7bf' }, 3: { name: 'Weintraube', hex: '#dbadff' },
+  4: { name: 'Flamingo', hex: '#ff887c' }, 5: { name: 'Banane', hex: '#fbd75b' }, 6: { name: 'Mandarine', hex: '#ffb878' },
+  7: { name: 'Pfau', hex: '#46d6db' }, 8: { name: 'Graphit', hex: '#9e9e9e' }, 9: { name: 'Heidelbeere', hex: '#5484ed' },
+  10: { name: 'Basilikum', hex: '#51b749' }, 11: { name: 'Tomate', hex: '#dc2127' },
+};
+const DEFAULT_CATEGORIES = { Elektrik: '5', Installation: '7', Innenausbau: '6', Möbel: '3', Garten: '10', Wartung: '9' };
+const DEFAULT_LOCATIONS = ['Garten', 'Wohnraum', 'Küche', 'Sanitär', 'Halle', 'Keller', 'Dachboden'];
+
+// --- Laden & Sync ---
+async function computeStatus() {
+  const pending = await Offline.pendingCount();
+  return { offline: !state.online, pending };
+}
+
+async function reload() {
+  state.tasks = await Offline.getCachedTasks();
+  state.status = await computeStatus();
+  render();
+}
+
+let syncing = false;
+// Vollständiger Abgleich mit dem geteilten Google-Kalender: ausstehende lokale Änderungen senden,
+// Änderungen von dort abholen. Wird durch den Sync-Button, beim Öffnen, beim Wiederverbinden, beim
+// Sichtbarwerden des Tabs und alle 5 Minuten aufgerufen.
+async function syncNow(silent) {
+  if (syncing) return;
+  syncing = true;
+  $('#syncBtn').disabled = true;
+  let needsSignIn = false;
+  if (!Offline.ping()) {
+    // Lokal schon klar: nicht angemeldet oder noch kein Kalender eingerichtet – kein Sync-Versuch nötig.
+    state.online = true; // kein Verbindungsproblem, sondern fehlende Einrichtung
+    state.status = await computeStatus();
+    if (!silent) toast('Nicht angemeldet oder noch kein Kalender eingerichtet.');
+  } else {
+    try {
+      const r = await Offline.sync();
+      state.online = true;
+      const cfg = await Offline.getConfig();
+      if (cfg) state.cfg = { ...state.cfg, categories: cfg.categories, locations: cfg.locations };
+      state.tasks = await Offline.getCachedTasks();
+      state.lastSyncError = r.aborted ? 'Verbindung verloren' : null;
+      if (!r.aborted) state.lastSyncAt = new Date();
+      // Diese beiden sind wichtig genug, um auch bei einem stillen Hintergrund-Sync angezeigt zu werden:
+      // eine dauerhaft abgelehnte Änderung (verworfen, sonst unbemerkt verloren) und ein erkannter
+      // Zusammenstoß mit einer zwischenzeitlichen Fremdänderung (nichts verloren, aber erwähnenswert).
+      if (r.failed.length) toast(`⚠ ${r.failed.length} lokale Änderung(en) konnten nicht übernommen werden: ${r.failed[0].error}`);
+      if (r.clashes.length) {
+        const names = [...new Set(r.clashes.map((c) => c.title))].join(', ');
+        toast(`ℹ Bei „${names}“ gab es während der Offline-Zeit auch eine Änderung auf einem anderen Gerät – geprüft, nichts ging verloren.`);
+      }
+      if (!silent) {
+        if (r.aborted) toast('Verbindung während der Übertragung verloren, der Rest folgt automatisch.');
+        else toast(`Sync fertig: ${r.pulled} übernommen, ${r.pushed} gesendet.`);
+      }
+    } catch (e) {
+      if (e.authRequired) {
+        needsSignIn = true;
+      } else if (!e.status) {
+        // Kein HTTP-Status: der Aufruf ist schon vor einer Antwort gescheitert, also vermutlich keine
+        // Verbindung – kein alarmierender Fehler, die Änderungen bleiben einfach lokal liegen.
+        state.online = false;
+        if (!silent) toast(`Nicht erreichbar. ${await Offline.pendingCount()} Änderung(en) werden lokal aufbewahrt.`);
+      } else {
+        state.online = true;
+        state.lastSyncError = e.message;
+        if (!silent) toast(e.message);
+      }
+    }
+    state.status = await computeStatus();
+  }
+  syncing = false;
+  $('#syncBtn').disabled = false;
+  if (needsSignIn) renderSignIn(); else render();
+}
+
+$('#syncBtn').onclick = () => syncNow(false);
+$('#signOutBtn').onclick = () => { if (confirm('Bei Google abmelden?')) { Auth.signOut(); renderSignIn(); } };
+window.addEventListener('hashchange', render);
+window.addEventListener('online', () => syncNow(true));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(true); });
+setInterval(() => { if (!document.hidden && !$('#dlg').open) syncNow(true); }, 5 * 60 * 1000);
+
+if ('serviceWorker' in navigator) {
+  // Lässt die Seite selbst auch ohne jede Verbindung starten (siehe public/sw.js); die Daten laufen
+  // unabhängig davon über IndexedDB (Offline.*).
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
+
+// --- Einrichtung: Google-Anmeldung, dann einmalig die ID des geteilten Kalenders ---
+function renderSetupScreen(title, lead, ...content) {
+  $('#view').replaceChildren(h('div', { class: 'step' },
+    h('h1', {}, title), h('p', { class: 'lead' }, lead), ...content));
+}
+
+function renderSignIn() {
+  const err = h('div', { class: 'error' });
+  renderSetupScreen('🏠 Haus-Tasks', 'Diese App verwaltet Haushaltsaufgaben gemeinsam über einen geteilten Google-Kalender.',
+    h('button', {
+      class: 'btn primary', onclick: async () => {
+        try { await Auth.signIn(); await boot(); } catch (e) { err.textContent = e.message; }
+      },
+    }, 'Mit Google anmelden'),
+    err);
+}
+
+function renderCalendarSetup() {
+  const input = h('input', { type: 'text', placeholder: 'z. B. abc123@group.calendar.google.com' });
+  const err = h('div', { class: 'error' });
+  renderSetupScreen('Geteilten Kalender einrichten',
+    'Trage die Kalender-ID des geteilten Kalenders ein. Wer die App schon eingerichtet hat, kann dir dafür einen Einladungslink schicken (spart das Eintippen) – siehe „Haushalt einladen“.',
+    h('div', { class: 'field' }, h('label', {}, 'Kalender-ID'), input),
+    h('div', { class: 'hint' }, 'Zu finden in Google Kalender: Zahnrad neben dem Kalendernamen → Einstellungen → „Kalender integrieren“ → „Kalender-ID“.'),
+    h('button', {
+      class: 'btn primary', onclick: async () => {
+        if (!input.value.trim()) { err.textContent = 'Bitte eine Kalender-ID eingeben.'; return; }
+        Offline.setCalendarId(input.value.trim());
+        await boot();
+      },
+    }, 'Übernehmen'),
+    err);
+}
+
+async function boot() {
+  if (!Auth.isSignedIn()) { renderSignIn(); return; }
+  if (!Offline.getCalendarId()) { renderCalendarSetup(); return; }
+
+  let cfg = await Offline.getConfig();
+  if (!cfg) {
+    // Ganz neuer, leerer Kalender: Vorgabe-Kategorien/-Orte anlegen, damit beim nächsten Sync alle
+    // Geräte dieselbe Ausgangsliste bekommen statt jedes für sich eine eigene zu erfinden.
+    cfg = { categories: DEFAULT_CATEGORIES, locations: DEFAULT_LOCATIONS, updated_at: new Date().toISOString() };
+    await Offline.saveConfig(cfg);
+  }
+  state.cfg = { categories: cfg.categories, locations: cfg.locations, priorities: PRIORITIES, colors: COLORS };
+  await reload();
+  syncNow(true); // Sync beim Öffnen
+}
+
+(async () => {
+  await Offline.init();
+  Auth.onChange(() => { if (!Auth.isSignedIn()) renderSignIn(); });
+  await boot();
+})();
+</script>
+</body>
+</html>

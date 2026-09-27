@@ -1,0 +1,29 @@
+{
+  "name": "haus-tasks",
+  "version": "1.0.0",
+  "description": "Haus-Aufgaben mit bidirektionalem Google-Kalender-Sync",
+  "main": "server.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "auth": "node auth.js",
+    "sync": "node sync.js",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@googleapis/calendar": "^20.0.0",
+    "express": "^5.2.1",
+    "google-auth-library": "^11.1.0",
+    "qrcode": "^1.5.4"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "private": true
+}

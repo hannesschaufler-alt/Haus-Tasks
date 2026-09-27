@@ -1,0 +1,110 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const L = require('../public/offline-logic');
+
+const CATS = { Elektrik: '5', Garten: '10' };
+
+test('Neuer Task bekommt eine feste, eindeutige ID und Vorgabewerte', () => {
+  const { task, tasks } = L.createTask([], { title: '  Lampe  ', category: 'Elektrik' }, CATS);
+  assert.strictEqual(typeof task.id, 'string');
+  assert.ok(task.id.length > 0);
+  assert.strictEqual(task.google_event_id, null);
+  assert.strictEqual(task.title, 'Lampe');
+  assert.strictEqual(task.color, '5');
+  assert.strictEqual(task.priority, 'mittel');
+  assert.deepStrictEqual(tasks, [task]);
+});
+
+test('Leerer Titel wird abgelehnt', () => {
+  assert.throws(() => L.createTask([], { title: '   ' }, CATS), /Titel fehlt/);
+});
+
+test('Serie ohne Datum wird abgelehnt, mit Datum normalisiert', () => {
+  assert.throws(() => L.createTask([], { title: 'X', recurrence: { type: 'weekly' } }, CATS), /Datum/);
+  const { task } = L.createTask([], { title: 'X', due_date: '2031-09-09', recurrence: { type: 'monthly_weekday' } }, CATS);
+  assert.deepStrictEqual([task.recurrence.nth, task.recurrence.weekday], [2, 2]); // 2. Dienstag, aus dem Datum abgeleitet
+  assert.ok(task.series_id);
+});
+
+test('Update übernimmt die Kategoriefarbe nur, wenn keine Farbe mitgegeben wurde', () => {
+  const { task: t0 } = L.createTask([], { title: 'X', category: 'Elektrik' }, CATS);
+  const { task: t1 } = L.updateTask([t0], t0.id, { category: 'Garten' }, CATS);
+  assert.strictEqual(t1.color, '10');
+  const { task: t2 } = L.updateTask([t1], t1.id, { category: 'Elektrik', color: '3' }, CATS);
+  assert.strictEqual(t2.color, '3');
+});
+
+test('setDone ist ein No-op, wenn der Status schon stimmt', () => {
+  const { task, tasks } = L.createTask([], { title: 'X' }, CATS);
+  const r = L.setDone(tasks, task.id, false);
+  assert.strictEqual(r.created, null);
+  assert.strictEqual(r.task, task);
+});
+
+test('Serie: Abhaken legt den Folgetermin ab dem alten Fälligkeitsdatum an, kein Duplikat bei erneutem Abhaken', () => {
+  const { task, tasks: t0 } = L.createTask(
+    [], { title: 'Heizung', due_date: '2031-09-09', recurrence: { type: 'monthly_weekday', nth: 2, weekday: 2 } }, CATS
+  );
+  const r1 = L.setDone(t0, task.id, true);
+  const open = r1.tasks.filter((t) => !t.done);
+  assert.strictEqual(open.length, 1);
+  assert.strictEqual(open[0].due_date, '2031-10-14');
+  assert.strictEqual(open[0].series_id, task.series_id);
+  assert.notStrictEqual(open[0].id, task.id);
+
+  const r2 = L.setDone(r1.tasks, task.id, false);
+  const r3 = L.setDone(r2.tasks, task.id, true);
+  assert.strictEqual(r3.tasks.length, 2); // kein zweiter Folgetermin
+});
+
+test('Serie: Checkliste wandert in den Folgetermin, aber mit offenen Punkten', () => {
+  const { task, tasks: t0 } = L.createTask(
+    [], { title: 'X', due_date: '2031-05-05', recurrence: { type: 'weekly' }, checklist: [{ text: 'a', done: true }] }, CATS
+  );
+  const r = L.setDone(t0, task.id, true);
+  assert.deepStrictEqual(r.created.checklist, [{ text: 'a', done: false }]);
+});
+
+test('Löschen: nie synchronisierter Task verschwindet komplett, bekannter wird nur markiert', () => {
+  const { task: fresh } = L.createTask([], { title: 'Neu' }, CATS);
+  assert.deepStrictEqual(L.deleteTask([fresh], fresh.id).tasks, []);
+
+  const known = { ...fresh, google_event_id: 'ev1' };
+  const r = L.deleteTask([known], known.id);
+  assert.strictEqual(r.tasks[0].deleted, true);
+});
+
+test('Kategorie: anlegen, doppelte (auch anders geschrieben) und leere Namen abgelehnt', () => {
+  assert.deepStrictEqual(L.createCategory(CATS, 'Möbel', '3'), { ...CATS, Möbel: '3' });
+  assert.throws(() => L.createCategory(CATS, 'garten'), /gibt es schon/);
+  assert.throws(() => L.createCategory(CATS, '  '), /Name fehlt/);
+});
+
+test('Kategorie umbenennen zieht Tasks mit, Löschen lässt sie ohne Kategorie stehen', () => {
+  const { task } = L.createTask([], { title: 'X', category: 'Garten' }, CATS);
+  const ren = L.updateCategory(CATS, [task], 'Garten', { name: 'Außenbereich' });
+  assert.strictEqual(ren.tasks[0].category, 'Außenbereich');
+  assert.strictEqual('Garten' in ren.categories, false);
+
+  const del = L.deleteCategory(CATS, [task], 'Garten');
+  assert.strictEqual(del.tasks[0].category, null);
+});
+
+test('Ort: anlegen, umbenennen, löschen', () => {
+  const locs = ['Keller', 'Garten'];
+  const { task } = L.createTask([], { title: 'X', location: 'Keller' }, CATS);
+  assert.throws(() => L.createLocation(locs, 'garten'), /gibt es schon/);
+
+  const ren = L.updateLocation(locs, [task], 'Keller', { name: 'Souterrain' });
+  assert.strictEqual(ren.tasks[0].location, 'Souterrain');
+
+  const del = L.deleteLocation(locs, [task], 'Keller');
+  assert.strictEqual(del.tasks[0].location, null);
+  assert.deepStrictEqual(del.locations, ['Garten']);
+});
+
+test('newId liefert stets unterschiedliche, nichtleere Werte', () => {
+  const ids = new Set(Array.from({ length: 50 }, () => L.newId()));
+  assert.strictEqual(ids.size, 50);
+  for (const id of ids) assert.ok(typeof id === 'string' && id.length > 0);
+});

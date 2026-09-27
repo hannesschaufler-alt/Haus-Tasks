@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Haushalt einladen</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="shortcut icon" href="favicon.ico">
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1c2230; --muted: #667085; --line: #e3e6ec;
+    --accent: #2f6fed; --accent-text: #ffffff; --danger: #d92d20; --chip: #eef1f6; --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12151c; --card: #1b1f29; --text: #e8ebf2; --muted: #98a2b3; --line: #2b3140; --accent: #5b8cff; --accent-text: #0e1420; --danger: #f97066; --chip: #262c3a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 16px; }
+  a.back { color: var(--accent); text-decoration: none; font-size: 14px; }
+  h1 { font-size: 22px; margin: 10px 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 20px; }
+  .step { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 16px; }
+  .step h2 { display: flex; align-items: center; gap: 10px; font-size: 16px; margin: 0 0 10px; }
+  .num { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-text); font-weight: 700; font-size: 14px; flex: none; }
+  .step p { margin: 6px 0; }
+  .btn { display: inline-block; border: 1px solid var(--line); background: var(--card); color: var(--text); padding: 9px 16px; border-radius: 10px; text-decoration: none; font: inherit; cursor: pointer; }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  textarea { width: 100%; font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--line); border-radius: 10px; padding: 12px; resize: vertical; }
+  .qr-box { text-align: center; padding: 16px; }
+  .qr-box canvas { background: #fff; padding: 10px; border-radius: 12px; }
+  .url { font-family: ui-monospace, monospace; background: var(--chip); padding: 8px 12px; border-radius: 8px; display: inline-block; margin-top: 10px; word-break: break-all; }
+  .warn { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); padding: 12px 14px; border-radius: 10px; margin-bottom: 16px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .hint { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href=".">← Zurück zu Haus-Tasks</a>
+  <h1>👪 Haushalt einladen</h1>
+  <p class="lead">Diese App braucht keinen eigenen Server: Jede Person nutzt ihr eigenes Google-Konto und meldet sich damit in der App an. Damit alle dieselben Tasks sehen, teilst du einmalig deinen Kalender.</p>
+
+  <div id="warnBox"></div>
+
+  <div class="step">
+    <h2><span class="num">1</span> Kalender „Haus-Tasks“ freigeben</h2>
+    <p>Einmalig pro Person, direkt in Google Kalender (nicht in dieser App):</p>
+    <a class="btn primary" href="https://calendar.google.com/calendar/r/settings" target="_blank" rel="noopener">Google-Kalender-Einstellungen öffnen</a>
+    <p class="hint">Dort links bei „Haus-Tasks“ auf die drei Punkte → <strong>Einstellungen und Freigabe</strong> → <strong>„Für bestimmte Personen freigeben“</strong> → die Person mit der Berechtigung <strong>„Änderungen an Terminen vornehmen“</strong> hinzufügen.</p>
+  </div>
+
+  <div class="step">
+    <h2><span class="num">2</span> Nachricht weiterschicken</h2>
+    <p>Per WhatsApp, Signal oder Mail – Link und Anleitung sind schon drin.</p>
+    <textarea id="msg" rows="8" readonly></textarea>
+    <div class="actions">
+      <button class="btn" id="copyBtn">📋 Text kopieren</button>
+      <span class="hint" id="copyHint"></span>
+    </div>
+  </div>
+
+  <div class="step">
+    <h2><span class="num">3</span> Oder direkt zeigen</h2>
+    <p>Steht ihr nebeneinander: Diesen Code scannen öffnet die App direkt mit dem richtigen Kalender – kein Abtippen nötig.</p>
+    <div class="qr-box">
+      <canvas id="qrCanvas"></canvas>
+      <div id="urlText"></div>
+    </div>
+  </div>
+
+  <p class="hint">Wer eingeladen ist, kann alle Tasks sehen, bearbeiten und löschen. Nur an Personen weitergeben, denen das recht ist.</p>
+</div>
+
+<script>
+const CAL_KEY = 'haus-tasks-calendar-id';
+const calId = localStorage.getItem(CAL_KEY);
+const warnBox = document.getElementById('warnBox');
+const msg = document.getElementById('msg');
+
+if (!calId) {
+  warnBox.innerHTML = '<div class="warn">Auf diesem Gerät ist noch keine Kalender-ID eingerichtet. Zuerst in der App selbst anmelden und einrichten, dann diese Seite erneut öffnen.</div>';
+  msg.value = '';
+  document.getElementById('qrCanvas').replaceWith('Kein QR-Code verfügbar.');
+} else {
+  // Relativ zur eigenen Adresse aufgebaut (nicht location.origin + '/'), damit es auch funktioniert,
+  // wenn die App nicht auf der Domain-Wurzel liegt (z. B. GitHub Pages: .../Haus-Tasks/).
+  const inviteUrl = new URL('.?cal=' + encodeURIComponent(calId), location.href).toString();
+  document.getElementById('urlText').innerHTML = `<a class="url" href="${inviteUrl}">${inviteUrl}</a>`;
+  QRCode.toCanvas(document.getElementById('qrCanvas'), inviteUrl, { width: 220, margin: 1 }, () => {});
+
+  msg.value = `Ich habe dir Zugriff auf unsere Haushalts-Tasks-App gegeben:
+
+1. Diesen Link öffnen: ${inviteUrl}
+2. Mit deinem Google-Konto anmelden (das, mit dem ich den Kalender „Haus-Tasks“ geteilt habe).
+3. Am Handy: über „Teilen“ → „Zum Home-Bildschirm“ hinzufügen, dann hast du ein eigenes App-Symbol.`;
+}
+
+document.getElementById('copyBtn').addEventListener('click', async () => {
+  const hint = document.getElementById('copyHint');
+  try {
+    await navigator.clipboard.writeText(msg.value);
+    hint.textContent = 'Kopiert!';
+  } catch {
+    msg.select();
+    hint.textContent = 'Bitte manuell kopieren (markiert).';
+  }
+  setTimeout(() => { hint.textContent = ''; }, 3000);
+});
+</script>
+</body>
+</html>
