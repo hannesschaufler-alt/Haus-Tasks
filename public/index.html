@@ -64,14 +64,17 @@
   select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
   .list { display: flex; flex-direction: column; gap: 10px; }
-  .date { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 58px; padding: 5px 0; border-radius: 10px;
-    background: var(--chip); line-height: 1.1; text-align: center; }
+  .date { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 58px; padding: 5px 0; border-radius: 10px;
+    background: var(--chip); line-height: 1.1; text-align: center; cursor: pointer; transition: background .15s; }
+  .date:hover { background: color-mix(in srgb, var(--accent) 15%, var(--chip)); }
   .date .day { font-size: 24px; font-weight: 700; }
   .date .wd, .date .mon { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
   .date.soon { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
   .date.late { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
   .date.soon .wd, .date.soon .mon, .date.late .wd, .date.late .mon { color: inherit; }
   .date.done, .date.none { opacity: .55; }
+  /* Unsichtbarer Auslöser für den nativen Datumswähler, siehe Funktion dateTile weiter unten. */
+  .date-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; pointer-events: none; }
   .task { display: grid; grid-template-columns: auto auto 1fr auto; gap: 12px; align-items: center; background: var(--card);
     border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow); transition: box-shadow .15s, border-color .15s; }
   .task:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
@@ -252,16 +255,35 @@ const todayStr = () => new Date().toLocaleDateString('sv-SE');
 const dayDiff = (iso) => Math.round((Date.parse(iso + 'T00:00:00Z') - Date.parse(todayStr() + 'T00:00:00Z')) / 864e5);
 const fmtDate = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
 
+// Direkt antippbar: öffnet den nativen Datumswähler, ohne erst den ganzen Task öffnen zu müssen.
+// Das eigentliche <input type=date> bleibt unsichtbar und dient nur als Datumswähler-Auslöser.
+async function quickSetDate(t, value) {
+  try {
+    await Offline.mutate('task', 'update', { id: t.id, patch: { due_date: value || null } });
+    await reload();
+    kickSync();
+  } catch (e) { toast(e.message); reload(); }
+}
+
 function dateTile(t) {
-  if (!t.due_date) return h('div', { class: 'date none', title: 'Kein Datum' }, h('span', { class: 'day' }, '–'), h('span', { class: 'mon' }, 'offen'));
+  const picker = h('input', { type: 'date', value: t.due_date || '', class: 'date-input', tabindex: -1, 'aria-hidden': 'true' });
+  picker.addEventListener('click', (e) => e.stopPropagation());
+  picker.addEventListener('change', () => quickSetDate(t, picker.value));
+  const openPicker = (e) => { e.stopPropagation(); picker.showPicker ? picker.showPicker() : picker.focus(); };
+
+  if (!t.due_date) {
+    return h('div', { class: 'date none', title: 'Datum setzen – antippen', onclick: openPicker },
+      h('span', { class: 'day' }, '–'), h('span', { class: 'mon' }, 'offen'), picker);
+  }
   const d = new Date(t.due_date + 'T12:00:00');
   const diff = dayDiff(t.due_date);
   const cls = t.done ? ' done' : diff < 0 ? ' late' : diff <= 1 ? ' soon' : '';
   const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? ` ’${String(d.getFullYear()).slice(2)}` : '';
-  return h('div', { class: 'date' + cls, title: fmtDate(t.due_date) },
+  return h('div', { class: 'date' + cls, title: fmtDate(t.due_date) + ' – antippen zum Ändern', onclick: openPicker },
     h('span', { class: 'wd' }, d.toLocaleDateString('de-DE', { weekday: 'short' }).replace('.', '')),
     h('span', { class: 'day' }, String(d.getDate())),
-    h('span', { class: 'mon' }, d.toLocaleDateString('de-DE', { month: 'short' }).replace('.', '') + yearSuffix));
+    h('span', { class: 'mon' }, d.toLocaleDateString('de-DE', { month: 'short' }).replace('.', '') + yearSuffix),
+    picker);
 }
 
 
