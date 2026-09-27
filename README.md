@@ -3,13 +3,14 @@
 Aufgabenverwaltung für Haus und Garten, direkt zwischen allen Geräten synchronisiert über einen
 **geteilten Google-Kalender** – ganz ohne eigenen Server. Jedes Gerät (PC, Handy) hat seine eigene
 Installation (eine statisch gehostete Seite), meldet sich mit dem eigenen Google-Konto an und
-synchronisiert direkt mit Google. Kategorie, Ort, Priorität, Notizen, Checkliste und Serie stecken dabei
-versteckt in jedem Kalendertermin mit (Google selbst zeigt nur Titel, Datum und Farbe an).
+synchronisiert direkt mit Google. Kategorie, Ort, Zuständigkeit, Priorität, Notizen, Checkliste und Serie
+stecken dabei versteckt in jedem Kalendertermin mit (Google selbst zeigt nur Titel, Datum und Farbe an).
 
 - **Offline-fähig:** Anlegen, Bearbeiten, Abhaken, Löschen funktionieren immer, auch ohne Verbindung. Sync automatisch oder per Knopfdruck, siehe „Offline & Sync“ unten
 - Serien legen den Folgetermin erst beim Abhaken an, berechnet ab dem alten Fälligkeitsdatum. Rhythmus wählbar: alle n Wochen, Monate oder Jahre, n-ter Wochentag im Monat, Tag x im Monat
 - Checkliste pro Task („Sub-Tasks light“): Punkte im Formular anlegen, in der Übersicht über das Badge „☑ 2/5“ aufklappen und direkt abhaken
 - Eigene Kategorien und Orte, geteilt über alle Geräte
+- **Zuständigkeit** (Caro/Hannes, fest eingestellt in `public/index.html` und `public/offline-logic.js`, Konstante `ASSIGNEES`): Avatar-Kürzel in der App, im Google-Kalender-Titel als „(C)“ bzw. „(H)“ sichtbar
 - Konfliktschutz: Vor jeder Änderung wird der aktuelle Google-Stand geholt, nur das tatsächlich geänderte Feld überschrieben – zwei Geräte können gleichzeitig unterschiedliche Felder desselben Tasks ändern, ohne sich zu überschreiben
 
 ## Einrichtung (einmalig, für die Person, die die App aufsetzt)

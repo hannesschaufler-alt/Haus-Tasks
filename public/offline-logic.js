@@ -7,6 +7,7 @@
   else root.OfflineLogic = factory(root.Recurrence);
 })(typeof self !== 'undefined' ? self : this, function (Recurrence) {
   const PRIORITIES = ['hoch', 'mittel', 'niedrig'];
+  const ASSIGNEES = ['Caro', 'Hannes']; // feste Liste, siehe sync-core.js für die Google-Kalender-Kürzel
 
   function uid() {
     if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -29,6 +30,7 @@
       due_date: input.due_date || null,
       category,
       location: input.location || null,
+      assignee: ASSIGNEES.includes(input.assignee) ? input.assignee : null,
       priority: PRIORITIES.includes(input.priority) ? input.priority : 'mittel',
       color: input.color || (category && categories[category]) || '9',
       notes: String(input.notes ?? ''),
@@ -162,5 +164,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
+    ASSIGNEES,
   };
 });

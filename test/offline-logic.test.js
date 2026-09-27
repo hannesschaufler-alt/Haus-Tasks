@@ -19,6 +19,13 @@ test('Leerer Titel wird abgelehnt', () => {
   assert.throws(() => L.createTask([], { title: '   ' }, CATS), /Titel fehlt/);
 });
 
+test('Zuständigkeit: nur Caro/Hannes werden übernommen, alles andere wird zu „niemand“', () => {
+  assert.strictEqual(L.createTask([], { title: 'X', assignee: 'Hannes' }, CATS).task.assignee, 'Hannes');
+  assert.strictEqual(L.createTask([], { title: 'X', assignee: 'Jemand Fremdes' }, CATS).task.assignee, null);
+  assert.strictEqual(L.createTask([], { title: 'X' }, CATS).task.assignee, null);
+  assert.deepStrictEqual(L.ASSIGNEES, ['Caro', 'Hannes']);
+});
+
 test('Serie ohne Datum wird abgelehnt, mit Datum normalisiert', () => {
   assert.throws(() => L.createTask([], { title: 'X', recurrence: { type: 'weekly' } }, CATS), /Datum/);
   const { task } = L.createTask([], { title: 'X', due_date: '2031-09-09', recurrence: { type: 'monthly_weekday' } }, CATS);

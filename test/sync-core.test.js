@@ -193,6 +193,33 @@ test('Löschen wirkt, ein nie synchronisierter Task hinterlässt keine Spur', as
   assert.strictEqual((await store.getRawTasks()).length, 0);
 });
 
+test('Zuständigkeit erscheint als Kürzel im Kalendertitel und wird beim Sync wieder herausgelöst', async () => {
+  const store = fakeStore();
+  await createLocal(store, { title: 'Rasen mähen', due_date: '2031-06-01', assignee: 'Hannes' });
+  await S.syncWith(store, remote);
+  const ev = remote.active()[0];
+  assert.strictEqual(ev.summary, 'Rasen mähen (H)');
+  assert.strictEqual(ev.extendedProperties.private.assignee, 'Hannes');
+
+  const t = (await store.getRawTasks())[0];
+  assert.strictEqual(t.title, 'Rasen mähen'); // eigener Titel bleibt sauber, ohne „(H)“
+  assert.strictEqual(t.assignee, 'Hannes');
+
+  // Erledigt + Kürzel gemeinsam: „✓ “ vorne, „(H)“ hinten, beide unabhängig lösbar.
+  await doneLocal(store, t.id, true);
+  await S.syncWith(store, remote);
+  assert.strictEqual(remote.active()[0].summary, '✓ Rasen mähen (H)');
+});
+
+test('Direkt in Google „Task (C)“ getippt: Zuständigkeit wird auch ohne extendedProperties erkannt', async () => {
+  const store = fakeStore();
+  await remote.insert({ summary: 'Einkaufen (C)', start: { date: '2031-07-01' }, end: { date: '2031-07-02' } });
+  await S.syncWith(store, remote);
+  const t = (await store.getRawTasks())[0];
+  assert.strictEqual(t.title, 'Einkaufen');
+  assert.strictEqual(t.assignee, 'Caro');
+});
+
 test('Kategorien/Orte werden über einen versteckten Termin geteilt', async () => {
   const store = fakeStore();
   await store.saveConfig({ categories: { Garten: '10' }, locations: ['Keller'], updated_at: new Date().toISOString() });

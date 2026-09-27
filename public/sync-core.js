@@ -33,6 +33,13 @@
   const DONE_RE = /^✓\s*/;
   const CONFIG_MARKER = 'haus-tasks-config'; // erkennt das versteckte Einstellungs-Event auf dem Kalender
 
+  // Zuständigkeit steht zusätzlich sichtbar als Kürzel hinter dem Titel im Kalender (Wunsch: auf einen
+  // Blick erkennbar, auch in Googles eigener App). extendedProperties.private.assignee bleibt trotzdem
+  // die verlässliche Quelle; das Kürzel im Titel ist nur die Anzeige.
+  const ASSIGNEE_INITIAL = { Caro: 'C', Hannes: 'H' };
+  const INITIAL_TO_ASSIGNEE = { C: 'Caro', H: 'Hannes' };
+  const ASSIGNEE_SUFFIX_RE = /\s*\(([CH])\)\s*$/;
+
   const nowIso = () => new Date().toISOString();
   const httpStatus = (e) => e.status ?? e.response?.status ?? (Number.isInteger(Number(e.code)) ? Number(e.code) : undefined);
   const isGone = (e) => [404, 410].includes(httpStatus(e));
@@ -42,8 +49,9 @@
     // Priorität, Notizen, Checkliste, Serie) steckt versteckt in extendedProperties.private – dadurch
     // sieht Google Kalender selbst nur einen normalen Termin, aber jede Haus-Tasks-Installation kann die
     // Zusatzinfos wieder auslesen. „private“ heißt hier: nur für diese App sichtbar, nicht personenbezogen.
+    const initial = t.assignee && ASSIGNEE_INITIAL[t.assignee];
     return {
-      summary: (t.done ? DONE_PREFIX : '') + t.title,
+      summary: (t.done ? DONE_PREFIX : '') + t.title + (initial ? ` (${initial})` : ''),
       start: { date: t.due_date },
       end: { date: Recurrence.addDays(t.due_date, 1) }, // Ende ganztägiger Events ist exklusiv
       colorId: t.done ? DONE_COLOR : t.color,
@@ -52,6 +60,7 @@
         private: {
           category: t.category || '',
           location: t.location || '',
+          assignee: t.assignee || '',
           priority: t.priority || 'mittel',
           notes: t.notes || '',
           checklist: JSON.stringify(t.checklist || []),
@@ -71,8 +80,13 @@
   function taskShapeFromEvent(ev) {
     const summary = ev.summary || '(ohne Titel)';
     const done = DONE_RE.test(summary);
-    const title = summary.replace(DONE_RE, '') || '(ohne Titel)';
+    let title = summary.replace(DONE_RE, '') || '(ohne Titel)';
     const p = ev.extendedProperties?.private || {};
+    // Kürzel aus dem sichtbaren Titel lösen – auch wenn jemand direkt in Google „Task (H)“ getippt hat,
+    // nicht nur wenn diese App es selbst angehängt hatte. extendedProperties.assignee hat trotzdem Vorrang.
+    const suffixMatch = title.match(ASSIGNEE_SUFFIX_RE);
+    if (suffixMatch) title = title.slice(0, suffixMatch.index).trim() || '(ohne Titel)';
+    const assignee = p.assignee || (suffixMatch ? INITIAL_TO_ASSIGNEE[suffixMatch[1]] : null) || null;
     let checklist = [];
     let recurrence = null;
     try { checklist = p.checklist ? JSON.parse(p.checklist) : []; } catch { /* fremder/kaputter Wert: ignorieren */ }
@@ -80,7 +94,7 @@
     const color = (!done && p.color) || (ev.colorId && ev.colorId !== DONE_COLOR ? ev.colorId : null) || p.color || '9';
     return {
       title, due_date: ev.start?.date || null, done, color,
-      category: p.category || null, location: p.location || null, priority: p.priority || 'mittel',
+      category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
       notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
     };
   }
