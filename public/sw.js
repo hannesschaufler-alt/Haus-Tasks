@@ -7,7 +7,7 @@
 // Alle Pfade relativ zur eigenen Registrierungs-Scope aufgebaut (nicht fest „/…“), damit das auch
 // funktioniert, wenn die Seite nicht auf der Domain-Wurzel liegt (z. B. GitHub Pages: .../Haus-Tasks/).
 const SCOPE = self.registration.scope; // z. B. https://<konto>.github.io/Haus-Tasks/
-const CACHE = 'haus-tasks-shell-v3';
+const CACHE = 'haus-tasks-shell-v4';
 const SHELL_FILES = [
   '', 'haushalt.html', 'manifest.webmanifest',
   'recurrence.js', 'offline-logic.js', 'sync-core.js', 'google-config.js', 'auth.js', 'gcal-remote.js', 'offline.js',

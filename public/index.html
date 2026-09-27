@@ -77,10 +77,12 @@
   .task:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
   .task.done { opacity: .72; }
   .task.done .title { text-decoration: line-through; color: var(--muted); }
-  /* Runde Checkbox statt eckigem Häkchen, näher an gängigen Task-Apps.
-     justify-self/align-self: nötig, weil Grid-Kinder ohne das die Spalte ausfüllen und die Kreise sonst
-     am Desktop zu Ovalen verzerrt werden (die Spaltenbreite richtet sich sonst nach dem breitesten Element). */
-  .task input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%;
+  /* Runde Checkbox statt eckigem Häkchen. width/height allein reichten nicht in jedem Browser (Grid-
+     Kinder werden sonst auf die Spaltenbreite gestreckt); aspect-ratio plus min/max-Werte erzwingen das
+     Quadrat zusätzlich, unabhängig von Stretching-Effekten. */
+  .task input[type=checkbox] { appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    width: 22px; height: 22px; min-width: 22px; min-height: 22px; max-width: 22px; max-height: 22px;
+    aspect-ratio: 1; border-radius: 50%; margin: 0; padding: 0;
     border: 2px solid var(--line); background: var(--card); display: grid; place-content: center; cursor: pointer;
     justify-self: center; align-self: center; flex: none;
     transition: border-color .15s, background .15s; }
@@ -93,9 +95,10 @@
   .badge { padding: 2px 9px; border-radius: 999px; background: var(--chip); font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
   .empty { text-align: center; color: var(--muted); padding: 32px 0; }
 
-  .avatar { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%;
+  .avatar { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+    min-width: 28px; min-height: 28px; max-width: 28px; max-height: 28px; aspect-ratio: 1; border-radius: 50%;
     background: var(--ac, var(--muted)); color: #fff; font-size: 12px; font-weight: 700; flex: none; justify-self: center; align-self: center; }
-  .avatar.sm { width: 22px; height: 22px; font-size: 11px; }
+  .avatar.sm { width: 22px; height: 22px; min-width: 22px; min-height: 22px; max-width: 22px; max-height: 22px; font-size: 11px; }
   .avatar-picker { display: flex; flex-wrap: wrap; gap: 8px; }
   .avatar-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; background: none; border: none; padding: 2px; color: var(--muted); font-size: 12px; border-radius: 10px; }
   .avatar-btn .avatar { border: 3px solid transparent; }
@@ -156,7 +159,7 @@
     .btn.small { padding: 7px 12px; }
     .icon-btn { padding: 10px; }
     .task { grid-template-columns: auto auto 1fr auto; gap: 10px; padding: 10px; }
-    .task input[type=checkbox] { width: 26px; height: 26px; }
+    .task input[type=checkbox] { width: 26px; height: 26px; min-width: 26px; min-height: 26px; max-width: 26px; max-height: 26px; }
     .date { width: 50px; }
     .date .day { font-size: 21px; }
     .toolbar select { flex: 1; min-width: 0; }
@@ -164,7 +167,7 @@
     .group-card h2 { flex-wrap: wrap; }
     form { padding: 16px; }
     .sw { width: 34px; height: 34px; }
-    .avatar { width: 30px; height: 30px; font-size: 13px; }
+    .avatar { width: 30px; height: 30px; min-width: 30px; min-height: 30px; max-width: 30px; max-height: 30px; font-size: 13px; }
     .actions { flex-wrap: wrap; }
   }
 </style>
