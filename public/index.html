@@ -285,6 +285,8 @@ function sorted(list) {
 // Bewusst schlank gehalten: nur Kreis zum Abhaken, Titel, Datum und ob es eine Checkliste gibt. Alles
 // andere (Kategorie, Ort, Zuständigkeit, Priorität, Notizen, Serie) sieht man beim Öffnen des Tasks;
 // über Sortierung und Filter lässt sich trotzdem gezielt einschränken.
+// Löschen gibt's nur noch in der Detailansicht (siehe openForm) – hier an derselben Stelle stattdessen
+// die Zuständigkeit, damit auf einen Blick sichtbar bleibt, wer den Task übernommen hat.
 function taskRow(t) {
   return h('div', { class: 'task' + (t.done ? ' done' : '') },
     h('input', { type: 'checkbox', checked: t.done, title: t.done ? 'Wieder öffnen' : 'Abhaken', onchange: (e) => toggleDone(t, e.target.checked) }),
@@ -293,7 +295,7 @@ function taskRow(t) {
       h('div', { class: 'title' }, t.title),
       t.checklist.length > 0 && h('div', { class: 'meta' }, checklistBadge(t)),
       state.expanded.has(t.id) && t.checklist.length > 0 && checklistView(t)),
-    h('button', { class: 'icon-btn', title: 'Löschen', onclick: () => removeTask(t) }, '🗑'));
+    avatar(t.assignee));
 }
 
 // Kleiner Avatar-Kreis mit Kürzel für die Zuständigkeit, wie Asanas Zuweisungs-Icons.
