@@ -72,14 +72,17 @@
   .date.late { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
   .date.soon .wd, .date.soon .mon, .date.late .wd, .date.late .mon { color: inherit; }
   .date.done, .date.none { opacity: .55; }
-  .task { display: grid; grid-template-columns: auto auto 1fr auto auto; gap: 12px; align-items: center; background: var(--card);
+  .task { display: grid; grid-template-columns: auto auto 1fr auto; gap: 12px; align-items: center; background: var(--card);
     border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow); transition: box-shadow .15s, border-color .15s; }
   .task:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
   .task.done { opacity: .72; }
   .task.done .title { text-decoration: line-through; color: var(--muted); }
-  /* Runde Checkbox statt eckigem Häkchen, näher an gängigen Task-Apps. */
+  /* Runde Checkbox statt eckigem Häkchen, näher an gängigen Task-Apps.
+     justify-self/align-self: nötig, weil Grid-Kinder ohne das die Spalte ausfüllen und die Kreise sonst
+     am Desktop zu Ovalen verzerrt werden (die Spaltenbreite richtet sich sonst nach dem breitesten Element). */
   .task input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%;
-    border: 2px solid var(--line); background: var(--card); display: grid; place-content: center; cursor: pointer; flex: none;
+    border: 2px solid var(--line); background: var(--card); display: grid; place-content: center; cursor: pointer;
+    justify-self: center; align-self: center; flex: none;
     transition: border-color .15s, background .15s; }
   .task input[type=checkbox]::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: #fff; transform: scale(0); transition: transform .12s; }
   .task input[type=checkbox]:checked { border-color: var(--accent); background: var(--accent); }
@@ -88,14 +91,10 @@
   .title { font-weight: 600; overflow-wrap: anywhere; letter-spacing: -.01em; }
   .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 4px; font-size: 12.5px; color: var(--muted); align-items: center; }
   .badge { padding: 2px 9px; border-radius: 999px; background: var(--chip); font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
-  .cat-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c, var(--muted)); flex: none; }
-  .badge.hoch { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
-  .badge.late { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); font-weight: 600; }
-  .badge.today { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); font-weight: 600; }
   .empty { text-align: center; color: var(--muted); padding: 32px 0; }
 
   .avatar { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%;
-    background: var(--ac, var(--muted)); color: #fff; font-size: 12px; font-weight: 700; flex: none; }
+    background: var(--ac, var(--muted)); color: #fff; font-size: 12px; font-weight: 700; flex: none; justify-self: center; align-self: center; }
   .avatar.sm { width: 22px; height: 22px; font-size: 11px; }
   .avatar-picker { display: flex; flex-wrap: wrap; gap: 8px; }
   .avatar-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; background: none; border: none; padding: 2px; color: var(--muted); font-size: 12px; border-radius: 10px; }
@@ -156,7 +155,7 @@
     .btn { padding: 10px 14px; }
     .btn.small { padding: 7px 12px; }
     .icon-btn { padding: 10px; }
-    .task { grid-template-columns: auto auto 1fr auto auto; gap: 10px; padding: 10px; }
+    .task { grid-template-columns: auto auto 1fr auto; gap: 10px; padding: 10px; }
     .task input[type=checkbox] { width: 26px; height: 26px; }
     .date { width: 50px; }
     .date .day { font-size: 21px; }
@@ -250,16 +249,6 @@ const todayStr = () => new Date().toLocaleDateString('sv-SE');
 const dayDiff = (iso) => Math.round((Date.parse(iso + 'T00:00:00Z') - Date.parse(todayStr() + 'T00:00:00Z')) / 864e5);
 const fmtDate = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
 
-// Das Datum steht groß als Kalenderkachel links an der Zeile; hier nur der Hinweis „überfällig / heute / morgen“.
-function dueBadge(t) {
-  if (!t.due_date || t.done) return null;
-  const d = dayDiff(t.due_date);
-  if (d < 0) return h('span', { class: 'badge late' }, `${-d} ${d === -1 ? 'Tag' : 'Tage'} überfällig`);
-  if (d === 0) return h('span', { class: 'badge today' }, 'Heute fällig');
-  if (d === 1) return h('span', { class: 'badge today' }, 'Morgen fällig');
-  return null;
-}
-
 function dateTile(t) {
   if (!t.due_date) return h('div', { class: 'date none', title: 'Kein Datum' }, h('span', { class: 'day' }, '–'), h('span', { class: 'mon' }, 'offen'));
   const d = new Date(t.due_date + 'T12:00:00');
@@ -272,16 +261,6 @@ function dateTile(t) {
     h('span', { class: 'mon' }, d.toLocaleDateString('de-DE', { month: 'short' }).replace('.', '') + yearSuffix));
 }
 
-function describeRule(r) {
-  if (!r) return '';
-  const nth = { 1: '1.', 2: '2.', 3: '3.', 4: '4.', 5: '5.', '-1': 'letzten' };
-  const n = r.interval > 1 ? r.interval : 1;
-  if (r.type === 'weekly') return n > 1 ? `alle ${n} Wochen` : 'wöchentlich';
-  if (r.type === 'monthly_weekday') return `${n > 1 ? `alle ${n} Monate: jeden` : 'jeden'} ${nth[r.nth]} ${WEEKDAYS[r.weekday]}${n > 1 ? '' : ' im Monat'}`;
-  if (r.type === 'monthly_day') return n > 1 ? `alle ${n} Monate am ${r.day}.` : `jeden ${r.day}. im Monat`;
-  if (r.type === 'yearly') return n > 1 ? `alle ${n} Jahre` : 'jährlich';
-  return '';
-}
 
 // --- Sortieren & Filtern ---
 const dueCmp = (a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999');
@@ -300,23 +279,17 @@ function sorted(list) {
 }
 
 // --- Task-Zeile ---
+// Bewusst schlank gehalten: nur Kreis zum Abhaken, Titel, Datum und ob es eine Checkliste gibt. Alles
+// andere (Kategorie, Ort, Zuständigkeit, Priorität, Notizen, Serie) sieht man beim Öffnen des Tasks;
+// über Sortierung und Filter lässt sich trotzdem gezielt einschränken.
 function taskRow(t) {
-  const rule = describeRule(t.recurrence);
-  return h('div', { class: 'task' + (t.done ? ' done' : ''), style: `--c:${hex(t.color)}` },
+  return h('div', { class: 'task' + (t.done ? ' done' : '') },
     h('input', { type: 'checkbox', checked: t.done, title: t.done ? 'Wieder öffnen' : 'Abhaken', onchange: (e) => toggleDone(t, e.target.checked) }),
     dateTile(t),
     h('div', { class: 'main', onclick: () => openForm(t) },
       h('div', { class: 'title' }, t.title),
-      h('div', { class: 'meta' },
-        dueBadge(t),
-        rule && h('span', { title: 'Serie' }, '🔁 ' + rule),
-        t.category && h('span', { class: 'badge' }, h('span', { class: 'cat-dot' }), t.category),
-        t.location && h('span', { class: 'badge' }, '📍 ' + t.location),
-        h('span', { class: 'badge ' + (t.priority === 'hoch' ? 'hoch' : '') }, 'Prio ' + t.priority),
-        t.notes && h('span', { title: t.notes }, '📝'),
-        t.checklist.length > 0 && checklistBadge(t)),
+      t.checklist.length > 0 && h('div', { class: 'meta' }, checklistBadge(t)),
       state.expanded.has(t.id) && t.checklist.length > 0 && checklistView(t)),
-    avatar(t.assignee),
     h('button', { class: 'icon-btn', title: 'Löschen', onclick: () => removeTask(t) }, '🗑'));
 }
 
