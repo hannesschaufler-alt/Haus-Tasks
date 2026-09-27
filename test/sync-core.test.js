@@ -7,11 +7,14 @@ function fakeRemote() {
   const events = new Map();
   let version = 0;
   let last = 0;
-  let configEvent = null;
   const stamp = () => new Date((last = Math.max(Date.now(), last + 1))).toISOString();
   const store = (ev) => { ev._v = ++version; events.set(ev.id, ev); return ev; };
   let n = 0;
   const notFound = () => Object.assign(new Error('Not Found'), { status: 404 });
+  // Die Konfiguration ist – wie beim echten Google-Kalender – ein ganz normaler Termin im selben
+  // Kalender (erkennbar an appMarker), kein separater Speicherort. Nur so fällt z. B. auf, wenn dieser
+  // Termin fälschlich auch als Task eingelesen würde.
+  const findConfigEvent = () => [...events.values()].find((e) => e.status !== 'cancelled' && e.extendedProperties?.private?.appMarker === S.CONFIG_MARKER);
   return {
     events,
     async listChanges(token) {
@@ -32,11 +35,19 @@ function fakeRemote() {
     },
     async remove(id) { if (events.has(id)) store({ ...events.get(id), status: 'cancelled', updated: stamp() }); },
     async readConfig() {
-      return configEvent ? { id: configEvent.id, updated: configEvent.updated, categories: configEvent.categories, locations: configEvent.locations } : null;
+      const ev = findConfigEvent();
+      if (!ev) return null;
+      const p = ev.extendedProperties.private;
+      return { id: ev.id, updated: ev.updated, categories: JSON.parse(p.categories), locations: JSON.parse(p.locations) };
     },
     async writeConfig(id, cfg) {
-      configEvent = { id: id || 'config1', updated: stamp(), categories: cfg.categories, locations: cfg.locations };
-      return { id: configEvent.id, updated: configEvent.updated };
+      const body = {
+        summary: '⚙️ Haus-Tasks Einstellungen (bitte nicht löschen oder bearbeiten)',
+        start: { date: '1970-01-01' }, end: { date: '1970-01-02' },
+        extendedProperties: { private: { appMarker: S.CONFIG_MARKER, categories: JSON.stringify(cfg.categories), locations: JSON.stringify(cfg.locations) } },
+      };
+      const ev = id ? store({ ...events.get(id), ...body, updated: stamp() }) : store({ ...body, id: `ev${++n}`, updated: stamp() });
+      return { id: ev.id, updated: ev.updated };
     },
     // Testhilfen, die ein zweites, unabhängiges Gerät (oder Google selbst) nachbilden
     editDirect(id, fields) { store({ ...events.get(id), ...fields, updated: stamp() }); },
@@ -193,6 +204,31 @@ test('Kategorien/Orte werden über einen versteckten Termin geteilt', async () =
   const store2 = fakeStore();
   await S.syncWith(store2, remote);
   assert.deepStrictEqual((await store2.getConfig()).categories, { Garten: '10' });
+
+  // Der Konfigurations-Termin selbst darf nie als Task auftauchen (siehe Nutzer-Rückmeldung „taucht als
+  // Task auf, obwohl er nicht gelöscht werden soll“).
+  assert.strictEqual((await store.getRawTasks()).length, 0);
+  assert.strictEqual((await store2.getRawTasks()).length, 0);
+});
+
+test('Ein fälschlich (ältere App-Version) importierter Konfigurations-Termin wird beim nächsten Sync lokal wieder entfernt, ohne den echten Termin anzurühren', async () => {
+  const store = fakeStore();
+  await store.saveConfig({ categories: { Garten: '10' }, locations: [], updated_at: new Date().toISOString() });
+  await S.syncWith(store, remote);
+  const configEventId = (await remote.readConfig()).id;
+
+  // Simuliert den alten Fehler: der Termin wurde einmal fälschlich als Task gespeichert.
+  await store.saveRawTasks([{
+    id: 'buggy-1', title: '⚙️ Haus-Tasks Einstellungen (bitte nicht löschen oder bearbeiten)', due_date: '1970-01-01',
+    category: null, location: null, priority: 'mittel', color: '9', notes: '', checklist: [], done: false, done_at: null,
+    recurrence: null, series_id: null, next_task_id: null, google_event_id: configEventId, google_updated: null,
+    deleted: false, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  }]);
+
+  await S.syncWith(store, remote);
+  assert.strictEqual((await store.getRawTasks()).length, 0, 'die lokale Fehl-Zeile muss verschwinden');
+  assert.ok(remote.active().find((e) => e.id === configEventId), 'der echte Kalendertermin bleibt erhalten');
+  assert.deepStrictEqual((await remote.readConfig()).categories, { Garten: '10' }, 'die Konfiguration bleibt intakt');
 });
 
 test('ZWEI GERÄTE: gleichzeitige Änderungen an unterschiedlichen Feldern überschreiben sich nicht', async () => {

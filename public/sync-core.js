@@ -93,6 +93,15 @@
   function applyRemoteEvent(tasks, ev) {
     const row = findByEvent(tasks, ev.id);
 
+    // Der versteckte Kategorien/Orte-Termin (siehe syncConfig) ist kein Task und soll nie als einer
+    // auftauchen. Existiert lokal schon eine fälschlich importierte Zeile dafür (ältere Version dieser
+    // App), wird nur die lokale Zeile entfernt – der echte Kalendertermin bleibt unangetastet, er trägt
+    // ja die gemeinsame Konfiguration.
+    if (ev.extendedProperties?.private?.appMarker === CONFIG_MARKER) {
+      if (!row) return { tasks, changed: false };
+      return { tasks: tasks.filter((t) => t.id !== row.id), changed: true };
+    }
+
     if (ev.status === 'cancelled') {
       if (!row) return { tasks, changed: false };
       return { tasks: tasks.filter((t) => t.id !== row.id), changed: true };

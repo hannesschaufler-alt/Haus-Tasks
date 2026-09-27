@@ -93,7 +93,21 @@
   const remote = root.GcalRemote.makeGcalRemote(root.Auth.getToken, async () => getCalendarId());
 
   // --- Für die Anzeige: wie sync-core.js' Sicht, aber ohne zum Löschen markierte Zeilen ---------------
-  async function getCachedTasks() { return (await getRawTasks()).filter((t) => !t.deleted); }
+  // Der versteckte Kategorien/Orte-Termin wurde von einer älteren Version dieser Datei fälschlich als
+  // Task übernommen (siehe sync-core.js). Ein normaler, nicht-vollständiger Sync liefert nur geänderte
+  // Termine, deshalb würde sich eine schon falsch importierte Zeile nicht von selbst korrigieren – hier
+  // wird sie beim Laden einmalig dauerhaft entfernt (nur lokal, der echte Kalendertermin bleibt unberührt).
+  const CONFIG_TITLE = '⚙️ Haus-Tasks Einstellungen (bitte nicht löschen oder bearbeiten)';
+  async function getCachedTasks() {
+    const raw = await getRawTasks();
+    const stray = raw.filter((t) => t.title === CONFIG_TITLE);
+    if (stray.length) {
+      await saveRawTasks(raw.filter((t) => t.title !== CONFIG_TITLE));
+      const strayIds = new Set(stray.map((t) => t.id));
+      for (const e of await getOutbox()) if (strayIds.has(e.taskId)) await removeOutboxEntry(e.seq);
+    }
+    return raw.filter((t) => !t.deleted && t.title !== CONFIG_TITLE);
+  }
   async function configOrEmpty() { return (await getConfig()) || { categories: {}, locations: [] }; }
 
   function pendingCount() { return getOutbox().then((l) => l.length); }
