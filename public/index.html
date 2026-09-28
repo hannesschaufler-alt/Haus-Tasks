@@ -288,7 +288,8 @@ function dateTile(t) {
 
 
 // --- Sortieren & Filtern ---
-const dueCmp = (a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999');
+// Tasks ohne Datum sollen ganz oben stehen (leerer String sortiert vor jedem echten Datum), nicht ganz unten.
+const dueCmp = (a, b) => (a.due_date || '').localeCompare(b.due_date || '');
 const prioCmp = (a, b) => PRIO_RANK[a.priority] - PRIO_RANK[b.priority];
 const SORTS = {
   due: { label: 'Fälligkeit, dann Priorität', fn: (a, b) => dueCmp(a, b) || prioCmp(a, b) || a.title.localeCompare(b.title) },
