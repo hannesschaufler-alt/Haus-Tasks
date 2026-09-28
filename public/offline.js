@@ -98,13 +98,25 @@
   // Termine, deshalb würde sich eine schon falsch importierte Zeile nicht von selbst korrigieren – hier
   // wird sie beim Laden einmalig dauerhaft entfernt (nur lokal, der echte Kalendertermin bleibt unberührt).
   const CONFIG_TITLE = '⚙️ Haus-Tasks Einstellungen (bitte nicht löschen oder bearbeiten)';
+  // Ein Gerät, das den datumslosen Platzhalter-Termin (siehe sync-core.js) noch mit einer älteren
+  // Version dieser Datei eingelesen hat, hat dabei fälschlich das Platzhalterdatum 1.1.1970 als echtes
+  // Fälligkeitsdatum übernommen. Weil sich am Google-Event seither nichts geändert hat, würde ein
+  // normaler Sync das nicht von selbst korrigieren (siehe „Echo der eigenen Änderung“ in sync-core.js)
+  // – hier wird jede so betroffene Zeile beim Laden einmalig lokal wieder auf „kein Datum“ zurückgesetzt.
+  const POISONED_DATE = root.SyncCore.NO_DATE_PLACEHOLDER;
   async function getCachedTasks() {
-    const raw = await getRawTasks();
+    let raw = await getRawTasks();
     const stray = raw.filter((t) => t.title === CONFIG_TITLE);
     if (stray.length) {
-      await saveRawTasks(raw.filter((t) => t.title !== CONFIG_TITLE));
+      raw = raw.filter((t) => t.title !== CONFIG_TITLE);
+      await saveRawTasks(raw);
       const strayIds = new Set(stray.map((t) => t.id));
       for (const e of await getOutbox()) if (strayIds.has(e.taskId)) await removeOutboxEntry(e.seq);
+    }
+    const poisoned = raw.filter((t) => t.due_date === POISONED_DATE);
+    if (poisoned.length) {
+      raw = raw.map((t) => (t.due_date === POISONED_DATE ? { ...t, due_date: null } : t));
+      await saveRawTasks(raw);
     }
     return raw.filter((t) => !t.deleted && t.title !== CONFIG_TITLE);
   }

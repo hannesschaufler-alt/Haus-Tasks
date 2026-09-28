@@ -326,5 +326,5 @@
     return { pulled, pushed: sent.length, failed, clashes, aborted };
   }
 
-  return { syncWith, pull, push, syncConfig, eventBody, taskShapeFromEvent, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR };
+  return { syncWith, pull, push, syncConfig, eventBody, taskShapeFromEvent, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
 });
