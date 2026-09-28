@@ -33,6 +33,11 @@
   const DONE_RE = /^✓\s*/;
   const CONFIG_MARKER = 'haus-tasks-config'; // erkennt das versteckte Einstellungs-Event auf dem Kalender
 
+  // Tasks ohne Datum bekommen trotzdem ein (verstecktes, auf 1970 gelegtes) Event, sonst würden sie nie
+  // zu Google übertragen und wären auf das eine Gerät beschränkt, auf dem sie angelegt wurden – bei
+  // mehreren unabhängigen Geräte-Installationen ist Google der einzige gemeinsame Speicherort.
+  const NO_DATE_PLACEHOLDER = '1970-01-01';
+
   // Zuständigkeit steht zusätzlich sichtbar als Kürzel hinter dem Titel im Kalender (Wunsch: auf einen
   // Blick erkennbar, auch in Googles eigener App). extendedProperties.private.assignee bleibt trotzdem
   // die verlässliche Quelle; das Kürzel im Titel ist nur die Anzeige.
@@ -50,12 +55,14 @@
     // sieht Google Kalender selbst nur einen normalen Termin, aber jede Haus-Tasks-Installation kann die
     // Zusatzinfos wieder auslesen. „private“ heißt hier: nur für diese App sichtbar, nicht personenbezogen.
     const initial = t.assignee && ASSIGNEE_INITIAL[t.assignee];
+    const due = t.due_date || NO_DATE_PLACEHOLDER;
     return {
       summary: (t.done ? DONE_PREFIX : '') + t.title + (initial ? ` (${initial})` : ''),
-      start: { date: t.due_date },
-      end: { date: Recurrence.addDays(t.due_date, 1) }, // Ende ganztägiger Events ist exklusiv
+      start: { date: due },
+      end: { date: Recurrence.addDays(due, 1) }, // Ende ganztägiger Events ist exklusiv
       colorId: t.done ? DONE_COLOR : t.color,
       transparency: 'transparent', // blockiert die Verfügbarkeit nicht
+      visibility: t.due_date ? 'default' : 'private', // Platzhalter-Termin möglichst unauffällig
       extendedProperties: {
         private: {
           category: t.category || '',
@@ -67,6 +74,7 @@
           recurrence: t.recurrence ? JSON.stringify(t.recurrence) : '',
           series_id: t.series_id || '',
           color: t.color || '', // die „echte“ Farbe, damit sie nach einem Erledigt/Grau-Zyklus wiederhergestellt werden kann
+          noDate: t.due_date ? '' : 'true', // Platzhalterdatum, kein echtes Fälligkeitsdatum
         },
       },
     };
@@ -92,8 +100,9 @@
     try { checklist = p.checklist ? JSON.parse(p.checklist) : []; } catch { /* fremder/kaputter Wert: ignorieren */ }
     try { recurrence = p.recurrence ? JSON.parse(p.recurrence) : null; } catch { /* dito */ }
     const color = (!done && p.color) || (ev.colorId && ev.colorId !== DONE_COLOR ? ev.colorId : null) || p.color || '9';
+    const due_date = p.noDate === 'true' ? null : (ev.start?.date || null);
     return {
-      title, due_date: ev.start?.date || null, done, color,
+      title, due_date, done, color,
       category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
       notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
     };
@@ -229,16 +238,6 @@
           if (clash) clashes.push(clash);
           await remote.remove(task.google_event_id).catch((e) => { if (!isGone(e)) throw e; });
           await store.saveRawTasks((await store.getRawTasks()).filter((t) => t.id !== entry.taskId));
-          sent.push(entry);
-          await store.removeOutboxEntry(entry.seq);
-          continue;
-        }
-
-        if (!task.due_date) {
-          // Ohne Datum gehört der Task nur in die App; ein evtl. vorhandenes Event wird entfernt.
-          if (task.google_event_id) await remote.remove(task.google_event_id).catch((e) => { if (!isGone(e)) throw e; });
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: null, google_updated: null } : t));
-          await store.saveRawTasks(tasks);
           sent.push(entry);
           await store.removeOutboxEntry(entry.seq);
           continue;

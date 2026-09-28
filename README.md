@@ -78,6 +78,7 @@ Die Kernlogik (Serien, Kategorien/Orte, Sync-Algorithmus inklusive Mehrgeräte-S
 - Farben sind Googles 11 Event-Farben. Graphit ist für „erledigt“ reserviert.
 - Events, die du direkt im Kalender „Haus-Tasks“ anlegst, werden als Task übernommen (ohne Kategorie/Ort, die kennt Google ja nicht). Wiederkehrende Google-Events (Googles eigene „Wiederholen“-Funktion) und Events mit Uhrzeit werden ignoriert.
 - Der versteckte Eintrag „⚙️ Haus-Tasks Einstellungen“ auf dem 1.1.1970 trägt die gemeinsame Kategorien-/Orte-Liste – nicht löschen oder bearbeiten.
+- Tasks ohne Datum bekommen ebenfalls einen (nicht öffentlich sichtbaren) Termin auf dem 1.1.1970, sonst würden sie nie zu Google übertragen und blieben auf das eine Gerät beschränkt, auf dem sie angelegt wurden. Solche Termine ebenfalls nicht direkt in Google bearbeiten oder löschen.
 - Für „Branding → Datenschutz/Startseite“ (falls Google das beim Veröffentlichen verlangt) reicht ein kurzer, öffentlich erreichbarer Text, z. B. als GitHub-Gist: kurz erklären, dass die App nur auf den Kalender „Haus-Tasks“ zugreift und keine Daten weitergibt.
 
 ## Frühere Variante: eigener PC-Server + Tailscale

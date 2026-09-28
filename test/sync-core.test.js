@@ -110,7 +110,13 @@ async function deleteLocal(store, id) {
   const before = raw.find((t) => t.id === id);
   const { tasks } = OfflineLogic.deleteTask(raw, id);
   await store.saveRawTasks(tasks);
-  if (before.google_event_id) await store.enqueue('delete', id, null, before.updated_at);
+  if (before.google_event_id) {
+    await store.enqueue('delete', id, null, before.updated_at);
+  } else {
+    // Wie Offline.mutate() im Browser: ein noch nie synchronisierter Task nimmt seine eigenen,
+    // noch wartenden Warteschlangen-Einträge (z. B. „create“) beim Löschen gleich mit.
+    for (const e of await store.getOutbox()) if (e.taskId === id) await store.removeOutboxEntry(e.seq);
+  }
 }
 
 const findByTitle = (list, title) => list.find((t) => t.title === title);
@@ -129,20 +135,47 @@ test('Task mit Datum wird als ganztägiges Event mit versteckten Zusatzfeldern a
   assert.strictEqual((await store.getOutbox()).length, 0);
 });
 
-test('Task ohne Datum bleibt lokal, Datum setzen/entfernen wirkt in Google', async () => {
+test('Task ohne Datum synct trotzdem (versteckter Platzhalter-Termin), Datum setzen/entfernen wirkt in Google', async () => {
   const store = fakeStore();
   const t = await createLocal(store, { title: 'Irgendwann' });
   await S.syncWith(store, remote);
-  assert.strictEqual(remote.active().length, 0);
+  // Ohne Datum bekommt der Task trotzdem ein Event – sonst wäre er auf dieses eine Gerät beschränkt,
+  // da es keinen zentralen Server mehr gibt, der ihn für andere Geräte vorhält.
+  assert.strictEqual(remote.active().length, 1);
+  let ev = remote.active()[0];
+  assert.strictEqual(ev.start.date, '1970-01-01');
+  assert.strictEqual(ev.extendedProperties.private.noDate, 'true');
+  assert.strictEqual(ev.visibility, 'private');
+  const sameEventId = ev.id;
 
   await updateLocal(store, t.id, { due_date: '2031-04-01' });
   await S.syncWith(store, remote);
+  ev = remote.active()[0];
   assert.strictEqual(remote.active().length, 1);
+  assert.strictEqual(ev.id, sameEventId); // dasselbe Event wird nur umdatiert, nicht neu angelegt
+  assert.strictEqual(ev.start.date, '2031-04-01');
+  assert.strictEqual(ev.extendedProperties.private.noDate, '');
 
   await updateLocal(store, t.id, { due_date: null });
   await S.syncWith(store, remote);
-  assert.strictEqual(remote.active().length, 0);
+  ev = remote.active()[0];
+  assert.strictEqual(ev.id, sameEventId);
+  assert.strictEqual(ev.start.date, '1970-01-01');
+  assert.strictEqual(ev.extendedProperties.private.noDate, 'true');
 });
+
+test('ZWEITES GERÄT übernimmt einen datumslosen Task korrekt (kein Platzhalterdatum sichtbar)', async () => {
+  const deviceA = fakeStore();
+  const deviceB = fakeStore();
+  await createLocal(deviceA, { title: 'Muffe kaufen', notes: 'Baumarkt' });
+  await S.syncWith(deviceA, remote);
+  await S.syncWith(deviceB, remote);
+  const onB = (await deviceB.getRawTasks())[0];
+  assert.strictEqual(onB.title, 'Muffe kaufen');
+  assert.strictEqual(onB.due_date, null);
+  assert.strictEqual(onB.notes, 'Baumarkt');
+});
+
 
 test('Abhaken: ✓ und grau in Google, Rückgängig stellt die echte Farbe wieder her', async () => {
   const store = fakeStore();
@@ -179,15 +212,26 @@ test('Serie: Folgetermin ab altem Fälligkeitsdatum, kein Duplikat bei erneutem 
   assert.strictEqual((await store.getRawTasks()).length, 2);
 });
 
-test('Löschen wirkt, ein nie synchronisierter Task hinterlässt keine Spur', async () => {
+test('Löschen wirkt in beide Richtungen, auch bei einem datumslosen Task', async () => {
   const store = fakeStore();
   const a = await createLocal(store, { title: 'A', due_date: '2031-03-10' });
-  const b = await createLocal(store, { title: 'B' }); // nie fällig, nie auf Google
+  const b = await createLocal(store, { title: 'B' }); // ohne Datum, bekommt trotzdem ein (verstecktes) Event
   await S.syncWith(store, remote);
+  assert.strictEqual(remote.active().length, 2);
 
   await deleteLocal(store, a.id);
   await deleteLocal(store, b.id);
-  assert.strictEqual((await store.getOutbox()).length, 1); // nur A braucht einen Löschauftrag
+  assert.strictEqual((await store.getOutbox()).length, 2); // beide haben inzwischen ein Event, brauchen also einen Löschauftrag
+  await S.syncWith(store, remote);
+  assert.strictEqual(remote.active().length, 0);
+  assert.strictEqual((await store.getRawTasks()).length, 0);
+});
+
+test('Löschen eines noch nie synchronisierten Tasks hinterlässt keine Spur', async () => {
+  const store = fakeStore();
+  const b = await createLocal(store, { title: 'Ganz frisch' }); // noch kein Sync gelaufen, noch kein Event
+  await deleteLocal(store, b.id);
+  assert.strictEqual((await store.getOutbox()).length, 0); // kein Löschauftrag nötig, es gab ja noch nichts bei Google
   await S.syncWith(store, remote);
   assert.strictEqual(remote.active().length, 0);
   assert.strictEqual((await store.getRawTasks()).length, 0);

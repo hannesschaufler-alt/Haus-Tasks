@@ -194,7 +194,22 @@
     return root.Auth.isSignedIn() && !!getCalendarId();
   }
 
+  // Einmaliger Nachzügler-Fix: Tasks ohne Datum wurden von einer älteren Version dieser App nie zu
+  // Google geschickt (eigene Warteschlangen-Einträge dafür wurden beim Sync stillschweigend verworfen,
+  // siehe sync-core.js). Ein Task ohne google_event_id, für den gerade nichts in der Warteschlange
+  // wartet, bekommt hier vor jedem Sync eine neue Chance – betrifft in der Praxis nur solche Altfälle,
+  // ein normal gerade erst angelegter Task hat ohnehin schon einen passenden Eintrag.
+  async function reconcileMissingEvents() {
+    const raw = await getRawTasks();
+    const pending = new Set((await getOutbox()).map((e) => e.taskId));
+    for (const t of raw) {
+      if (t.deleted || t.google_event_id || pending.has(t.id)) continue;
+      await enqueue({ kind: 'task', op: 'create', taskId: t.id, patch: t });
+    }
+  }
+
   async function sync() {
+    await reconcileMissingEvents();
     return root.SyncCore.syncWith(store, remote);
   }
 
