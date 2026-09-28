@@ -137,6 +137,12 @@
   .step h1 { margin: 0; font-size: 20px; }
   .step .lead { color: var(--muted); margin: 0; }
 
+  /* Erneute Anmeldung mitten in der Nutzung: nicht die ganze Ansicht ersetzen, nur ein schmaler Hinweis
+     mit Ein-Klick-Anmeldung – die zwischengespeicherten Tasks bleiben währenddessen sichtbar. */
+  .auth-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: color-mix(in srgb, var(--accent) 12%, var(--card));
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 14px; font-size: 14px; }
+  .auth-banner span { flex: 1; min-width: 180px; }
+
   .badge.chk { border: none; color: inherit; cursor: pointer; font: inherit; font-size: 12px; }
   .badge.chk:hover { outline: 1px solid var(--accent); }
   .badge.chk.ok { background: color-mix(in srgb, var(--ok) 22%, transparent); color: var(--ok); }
@@ -185,6 +191,7 @@
       <button class="icon-btn" id="signOutBtn" title="Bei Google abmelden">⎋</button>
     </div>
   </header>
+  <div id="authBanner"></div>
   <main id="view"></main>
 </div>
 
@@ -692,6 +699,26 @@ async function reload() {
   render();
 }
 
+// Erneute Anmeldung mitten in der Nutzung: schmaler Hinweis statt die ganze Ansicht zu ersetzen, damit
+// die zwischengespeicherten Tasks sichtbar und bedienbar bleiben (sie liegen ja lokal, siehe Offline.*).
+function showAuthBanner() {
+  const el = $('#authBanner');
+  if (el.childElementCount) return; // schon sichtbar
+  const btn = h('button', {
+    class: 'btn small primary',
+    onclick: async () => {
+      btn.disabled = true;
+      try {
+        await Auth.signIn(); // echter Klick: Google zeigt bei Bedarf den Anmeldebildschirm
+        el.replaceChildren();
+        syncNow(true);
+      } catch (e) { toast(e.message); btn.disabled = false; }
+    },
+  }, 'Jetzt anmelden');
+  el.replaceChildren(h('div', { class: 'auth-banner' }, h('span', {}, '🔒 Bei Google abgemeldet – zum Weitersynchronisieren erneut anmelden.'), btn));
+}
+function hideAuthBanner() { $('#authBanner').replaceChildren(); }
+
 let syncing = false;
 // Vollständiger Abgleich mit dem geteilten Google-Kalender: ausstehende lokale Änderungen senden,
 // Änderungen von dort abholen. Wird durch den Sync-Button, beim Öffnen, beim Wiederverbinden, beim
@@ -700,7 +727,6 @@ async function syncNow(silent) {
   if (syncing) return;
   syncing = true;
   $('#syncBtn').disabled = true;
-  let needsSignIn = false;
   if (!Offline.ping()) {
     // Lokal schon klar: nicht angemeldet oder noch kein Kalender eingerichtet – kein Sync-Versuch nötig.
     state.online = true; // kein Verbindungsproblem, sondern fehlende Einrichtung
@@ -708,6 +734,13 @@ async function syncNow(silent) {
     if (!silent) toast('Nicht angemeldet oder noch kein Kalender eingerichtet.');
   } else {
     try {
+      // Zuerst, noch bevor irgendwelche IndexedDB-Zugriffe laufen: einen gültigen Token sicherstellen.
+      // So bleibt bei einem Klick auf den Sync-Button möglichst viel von der „echten Nutzer-Interaktion“
+      // erhalten, auf die sich Googles eigene, stille Anmelde-Erneuerung verlässt (siehe deren
+      // Dokumentation: requestAccessToken ist für Aufrufe aus einer Nutzer-Aktion gedacht, nicht für
+      // reine Hintergrundaufrufe – ein automatischer Sync alle 5 Minuten hat diesen Vorteil naturgemäß nicht).
+      await Auth.getToken();
+      hideAuthBanner();
       const r = await Offline.sync();
       state.online = true;
       const cfg = await Offline.getConfig();
@@ -729,7 +762,11 @@ async function syncNow(silent) {
       }
     } catch (e) {
       if (e.authRequired) {
-        needsSignIn = true;
+        // Mitten in der Nutzung abgemeldet: nur ein Hinweis-Banner, die zwischengespeicherte Ansicht
+        // bleibt stehen. Nur beim allerersten Laden (noch gar keine Daten da) macht die volle
+        // Anmeldeseite Sinn – das entscheidet boot() für sich, hier reicht immer das Banner.
+        state.online = true;
+        showAuthBanner();
       } else if (!e.status) {
         // Kein HTTP-Status: der Aufruf ist schon vor einer Antwort gescheitert, also vermutlich keine
         // Verbindung – kein alarmierender Fehler, die Änderungen bleiben einfach lokal liegen.
@@ -745,7 +782,7 @@ async function syncNow(silent) {
   }
   syncing = false;
   $('#syncBtn').disabled = false;
-  if (needsSignIn) renderSignIn(); else render();
+  render();
 }
 
 $('#syncBtn').onclick = () => syncNow(false);
