@@ -7,7 +7,7 @@
 // Alle Pfade relativ zur eigenen Registrierungs-Scope aufgebaut (nicht fest „/…“), damit das auch
 // funktioniert, wenn die Seite nicht auf der Domain-Wurzel liegt (z. B. GitHub Pages: .../Haus-Tasks/).
 const SCOPE = self.registration.scope; // z. B. https://<konto>.github.io/Haus-Tasks/
-const CACHE = 'haus-tasks-shell-v4';
+const CACHE = 'haus-tasks-shell-v5';
 const SHELL_FILES = [
   '', 'haushalt.html', 'manifest.webmanifest',
   'recurrence.js', 'offline-logic.js', 'sync-core.js', 'google-config.js', 'auth.js', 'gcal-remote.js', 'offline.js',
@@ -39,11 +39,11 @@ self.addEventListener('fetch', (e) => {
     );
     return;
   }
-  // Statische Dateien: aus dem Cache, im Hintergrund aktualisieren.
+  // Statische Dateien: zuerst frisch aus dem Netz (damit Logik-Updates sofort beim ersten Laden greifen,
+  // nicht erst nach einem zweiten Reload), nur ohne Verbindung aus dem Cache.
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      const fresh = fetch(e.request).then((res) => { caches.open(CACHE).then((c) => c.put(e.request, res.clone())); return res; }).catch(() => cached);
-      return cached || fresh;
-    })
+    fetch(e.request)
+      .then((res) => { caches.open(CACHE).then((c) => c.put(e.request, res.clone())); return res; })
+      .catch(() => caches.match(e.request))
   );
 });
