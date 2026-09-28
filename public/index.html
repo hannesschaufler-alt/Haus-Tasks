@@ -148,11 +148,22 @@
   .badge.chk.ok { background: color-mix(in srgb, var(--ok) 22%, transparent); color: var(--ok); }
   .chk-list { list-style: none; margin: 8px 0 2px; padding: 0; display: grid; gap: 6px; cursor: default; }
   .chk-list label { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
-  .chk-list input[type=checkbox] { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--accent); }
   .chk-list li.done span { text-decoration: line-through; color: var(--muted); }
   .chk-rows { display: grid; gap: 6px; }
-  .chk-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; }
-  .chk-row input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+  .chk-row { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; align-items: center; }
+  /* Runde Checkbox wie beim Task selbst (siehe .task input[type=checkbox]), nur kleiner. */
+  .chk-list input[type=checkbox], .chk-row input[type=checkbox] { appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    width: 18px; height: 18px; min-width: 18px; min-height: 18px; max-width: 18px; max-height: 18px;
+    aspect-ratio: 1; border-radius: 50%; margin: 0; padding: 0; margin-top: 1px;
+    border: 2px solid var(--line); background: var(--card); display: grid; place-content: center; cursor: pointer;
+    flex: none; transition: border-color .15s, background .15s; }
+  .chk-list input[type=checkbox]::before, .chk-row input[type=checkbox]::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #fff; transform: scale(0); transition: transform .12s; }
+  .chk-list input[type=checkbox]:checked, .chk-row input[type=checkbox]:checked { border-color: var(--accent); background: var(--accent); }
+  .chk-list input[type=checkbox]:checked::before, .chk-row input[type=checkbox]:checked::before { transform: scale(1); }
+  .chk-move { display: flex; flex-direction: column; }
+  .chk-move button { padding: 1px 6px; font-size: 10px; line-height: 1.5; }
+  .chk-move button:disabled { opacity: .3; cursor: default; }
+  .chk-move button:disabled:hover { color: var(--muted); background: none; }
   .chk-add { justify-self: start; margin-top: 6px; }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; z-index: 10; }
   dialog { max-height: calc(100dvh - 24px); overflow-y: auto; }
@@ -549,10 +560,29 @@ function openGroupForm(kind, name) {
 function makeChecklistEditor(initial) {
   const rows = h('div', { class: 'chk-rows' });
 
+  // Reihenfolge wird rein über die DOM-Reihenfolge der Zeilen gesteuert (siehe get()) – Verschieben
+  // heißt also einfach, die Zeile im DOM eine Position weiter vor/zurück zu setzen.
+  const refreshMoveState = () => {
+    const list = [...rows.children];
+    list.forEach((r, i) => {
+      r.querySelector('.chk-up').disabled = i === 0;
+      r.querySelector('.chk-down').disabled = i === list.length - 1;
+    });
+  };
+
   const addRow = (text = '', done = false, { focus = false, after = null } = {}) => {
     const cb = h('input', { type: 'checkbox', checked: done, title: 'Erledigt' });
     const input = h('input', { type: 'text', value: text, placeholder: 'Punkt …', maxLength: 200 });
-    const row = h('div', { class: 'chk-row' }, cb, input, h('button', { type: 'button', class: 'icon-btn', title: 'Punkt entfernen', onclick: () => row.remove() }, '✕'));
+    const up = h('button', {
+      type: 'button', class: 'icon-btn chk-up', title: 'Nach oben verschieben',
+      onclick: () => { const prev = row.previousElementSibling; if (prev) { rows.insertBefore(row, prev); refreshMoveState(); input.focus(); } },
+    }, '▲');
+    const down = h('button', {
+      type: 'button', class: 'icon-btn chk-down', title: 'Nach unten verschieben',
+      onclick: () => { const next = row.nextElementSibling; if (next) { rows.insertBefore(next, row); refreshMoveState(); input.focus(); } },
+    }, '▼');
+    const row = h('div', { class: 'chk-row' }, cb, input, h('div', { class: 'chk-move' }, up, down),
+      h('button', { type: 'button', class: 'icon-btn', title: 'Punkt entfernen', onclick: () => { row.remove(); refreshMoveState(); } }, '✕'));
 
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -562,6 +592,7 @@ function makeChecklistEditor(initial) {
         e.preventDefault();
         const prev = row.previousElementSibling;
         row.remove();
+        refreshMoveState();
         prev?.querySelector('input[type=text]').focus();
       }
     });
@@ -576,6 +607,7 @@ function makeChecklistEditor(initial) {
     });
 
     after ? after.after(row) : rows.append(row);
+    refreshMoveState();
     if (focus) input.focus();
     return row;
   };
