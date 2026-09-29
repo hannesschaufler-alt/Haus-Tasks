@@ -2,10 +2,18 @@
 // bewusst passend für eine rein statisch gehostete Seite. Anders als bei der bisherigen Desktop-App gibt
 // es hier keinen dauerhaften Refresh-Token: Der Zugriffstoken lebt ca. eine Stunde und wird erneuert,
 // solange die Google-Sitzung im Browser aktiv ist – meist unbemerkt im Hintergrund, ohne erneute Anmeldung.
+//
+// Ein echter, serverlos dauerhafter Login (mit richtigem Refresh-Token) würde ein Google-Client-Secret im
+// öffentlichen Quelltext erfordern (geprüft: ein "Desktop-App"-Client käme zwar ohne Secret aus, akzeptiert
+// aber nur localhost-Adressen als Rücksprungziel, keine gehostete Seite) – bewusst nicht gewählt. Stattdessen
+// zwei kleinere, serverlose Verbesserungen: das zuletzt genutzte Konto merken (spart bei einer nötigen
+// erneuten Anmeldung die Kontoauswahl) und der Erneuerungsversuch etwas großzügiger vor Ablauf.
 (function (root) {
   const STORAGE_KEY = 'haus-tasks-google-token';
+  const HINT_KEY = 'haus-tasks-google-hint';
   let tokenClient = null;
   let current = loadStored(); // { access_token, expires_at } | null
+  let hint = loadHint(); // zuletzt bekannte Konto-E-Mail, nur fürs schnellere erneute Anmelden
   const listeners = new Set();
 
   function loadStored() {
@@ -17,6 +25,26 @@
     } catch {
       return null;
     }
+  }
+
+  function loadHint() {
+    try { return localStorage.getItem(HINT_KEY) || null; } catch { return null; }
+  }
+
+  function storeHint(email) {
+    hint = email || null;
+    try { if (email) localStorage.setItem(HINT_KEY, email); else localStorage.removeItem(HINT_KEY); } catch { /* ohne Speicherzugriff einfach nur im Speicher behalten */ }
+  }
+
+  // Best-effort, blockiert nichts: die Mail-Adresse dient nur als login_hint für einen künftigen, evtl.
+  // nötigen sichtbaren Login – ohne sie muss man dort erst wieder das Konto aus der Liste auswählen.
+  async function refreshHint(accessToken) {
+    try {
+      const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!res.ok) return;
+      const info = await res.json();
+      if (info.email) storeHint(info.email);
+    } catch { /* kein Problem, betrifft nur den Komfort beim nächsten Login */ }
   }
 
   function store(token) {
@@ -60,9 +88,10 @@
         if (resp.error) return reject(new Error(resp.error_description || resp.error));
         const token = { access_token: resp.access_token, expires_at: Date.now() + (Number(resp.expires_in) || 3000) * 1000 };
         store(token);
+        refreshHint(token.access_token);
         resolve(token);
       };
-      tokenClient.requestAccessToken({ prompt: promptMode });
+      tokenClient.requestAccessToken(hint ? { prompt: promptMode, login_hint: hint } : { prompt: promptMode });
     });
   }
 
@@ -78,13 +107,15 @@
       google.accounts.oauth2.revoke(current.access_token, () => {});
     }
     store(null);
+    storeHint(null); // explizites Abmelden: nicht das nächste Mal ein evtl. falsches Konto vorschlagen
   }
 
   // Liefert einen gültigen Zugriffstoken, erneuert ihn bei Bedarf im Hintergrund. Wirft, wenn dafür eine
   // erneute, sichtbare Anmeldung nötig wäre (z. B. Zugriff wurde bei Google widerrufen) – die Oberfläche
-  // zeigt dann wieder den Anmelde-Button.
+  // zeigt dann wieder den Anmelde-Button. Die 5-Minuten-Schwelle (statt erst kurz vor Ablauf) gibt der
+  // stillen Erneuerung etwas Luft, bevor der Token wirklich abgelaufen ist.
   async function getToken() {
-    if (current && current.expires_at > Date.now() + 30000) return current.access_token;
+    if (current && current.expires_at > Date.now() + 5 * 60 * 1000) return current.access_token;
     await ensureClient();
     try {
       return (await requestToken('')).access_token; // '' = versucht es zunächst still, ohne Pop-up
