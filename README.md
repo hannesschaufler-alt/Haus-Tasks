@@ -6,7 +6,7 @@ Installation (eine statisch gehostete Seite), meldet sich mit dem eigenen Google
 synchronisiert direkt mit Google. Kategorie, Ort, Zuständigkeit, Priorität, Notizen, Checkliste und Serie
 stecken dabei versteckt in jedem Kalendertermin mit (Google selbst zeigt nur Titel, Datum und Farbe an).
 
-- **GTD-Workflow:** Schnellerfassung oben auf der Startseite (nur Titel, Enter) legt einen Task in einer eigenen Inbox an; von dort per Klick „To Do“ oder „Später“ zuordnen (oder bei Kleinkram gleich „✓“ erledigen). „Später“-Tasks liegen getrennt auf einer eigenen Unterseite, sortiert nach Anlagedatum (älteste zuerst), damit nichts in Vergessenheit gerät. Ein Datum zu vergeben befördert einen „Später“-Task automatisch zurück zu „To Do“
+- **GTD-Workflow:** Schnellerfassung oben auf der Startseite (nur Titel, Enter) legt einen Task in einer eigenen Inbox an; von dort per Klick „To Do“ oder „Später“ zuordnen (oder bei Kleinkram gleich „✓“ erledigen). „Anstehend“ und „Später“ sind eigene auf-/zuklappbare Bereiche auf der Startseite (Später standardmäßig eingeklappt), „Später“ sortiert nach Anlagedatum (älteste zuerst), damit nichts in Vergessenheit gerät. Ein Datum zu vergeben befördert einen „Später“-Task automatisch zurück zu „To Do“
 - **Offline-fähig:** Anlegen, Bearbeiten, Abhaken, Löschen funktionieren immer, auch ohne Verbindung. Sync automatisch oder per Knopfdruck, siehe „Offline & Sync“ unten
 - Serien legen den Folgetermin erst beim Abhaken an, berechnet ab dem alten Fälligkeitsdatum. Rhythmus wählbar: alle n Wochen, Monate oder Jahre, n-ter Wochentag im Monat, Tag x im Monat
 - Checkliste pro Task („Sub-Tasks light“): Punkte im Formular anlegen, in der Übersicht über das Badge „☑ 2/5“ aufklappen und direkt abhaken
