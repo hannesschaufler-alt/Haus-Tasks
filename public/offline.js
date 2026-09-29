@@ -140,14 +140,21 @@
         const before = raw.find((t) => t.id === args.id);
         const { task, tasks } = L.updateTask(raw, args.id, args.patch, cfg.categories || {});
         await saveRawTasks(tasks);
-        await enqueue({ kind, op, taskId: args.id, patch: args.patch, baseUpdatedAt: before?.updated_at });
+        // updateTask() kann Felder selbst mitändern (z. B. die automatische Später→To-Do-Beförderung bei
+        // einem neu gesetzten Datum, siehe offline-logic.js) – die müssen mit in den Sync, auch wenn sie
+        // nicht im ursprünglichen Patch standen, sonst weicht der lokale Stand vom Google-Stand ab.
+        const patch = task.bucket !== before?.bucket && !('bucket' in args.patch) ? { ...args.patch, bucket: task.bucket } : args.patch;
+        await enqueue({ kind, op, taskId: args.id, patch, baseUpdatedAt: before?.updated_at });
         return task;
       }
       if (op === 'done') {
         const before = raw.find((t) => t.id === args.id);
         const { task, tasks, created } = L.setDone(raw, args.id, args.done);
         await saveRawTasks(tasks);
-        await enqueue({ kind, op, taskId: args.id, patch: { done: args.done }, baseUpdatedAt: before?.updated_at });
+        // setDone() befüllt due_date beim Abhaken eines datumslosen Tasks mit dem heutigen Datum (siehe
+        // offline-logic.js) – muss mit in den Patch, sonst überschreibt der Merge-vor-Patch-Mechanismus in
+        // push() es beim Senden wieder mit dem alten (leeren) Stand.
+        await enqueue({ kind, op, taskId: args.id, patch: { done: args.done, due_date: task.due_date }, baseUpdatedAt: before?.updated_at });
         // Ein Folgetermin einer Serie entsteht rein lokal und braucht einen eigenen Anlege-Auftrag –
         // sync-core.js kennt Serien nicht, es sendet nur, was in der Warteschlange steht.
         if (created) await enqueue({ kind: 'task', op: 'create', taskId: created.id, patch: created });

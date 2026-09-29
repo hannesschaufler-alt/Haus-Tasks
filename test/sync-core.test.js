@@ -91,7 +91,10 @@ async function updateLocal(store, id, patch, categories = {}) {
   const before = raw.find((t) => t.id === id);
   const { task, tasks } = OfflineLogic.updateTask(raw, id, patch, categories);
   await store.saveRawTasks(tasks);
-  await store.enqueue('update', id, patch, before.updated_at);
+  // Wie Offline.mutate() im Browser: Nebeneffekte von updateTask() (z. B. automatische Später→To-Do-
+  // Beförderung beim Setzen eines Datums) müssen mit in den Sync, auch wenn sie nicht im Patch standen.
+  const sentPatch = task.bucket !== before.bucket && !('bucket' in patch) ? { ...patch, bucket: task.bucket } : patch;
+  await store.enqueue('update', id, sentPatch, before.updated_at);
   return task;
 }
 async function doneLocal(store, id, done) {
@@ -99,7 +102,8 @@ async function doneLocal(store, id, done) {
   const before = raw.find((t) => t.id === id);
   const { task, tasks, created } = OfflineLogic.setDone(raw, id, done);
   await store.saveRawTasks(tasks);
-  await store.enqueue('done', id, { done }, before.updated_at);
+  // Wie Offline.mutate(): setDone() befüllt due_date beim Abhaken eines datumslosen Tasks, das muss mit.
+  await store.enqueue('done', id, { done, due_date: task.due_date }, before.updated_at);
   // Ein Folgetermin einer Serie entsteht lokal und braucht einen eigenen „Anlegen“-Auftrag –
   // push() weiß nichts von Serien, es sendet nur, was in der Warteschlange steht.
   if (created) await store.enqueue('create', created.id, created);
@@ -162,6 +166,49 @@ test('Task ohne Datum synct trotzdem (versteckter Platzhalter-Termin), Datum set
   assert.strictEqual(ev.id, sameEventId);
   assert.strictEqual(ev.start.date, '1970-01-01');
   assert.strictEqual(ev.extendedProperties.private.noDate, 'true');
+});
+
+test('Bucket (GTD-Status) synct zwischen Geräten, Events ohne das Feld gelten als "todo"', async () => {
+  const store = fakeStore();
+  await createLocal(store, { title: 'Idee', bucket: 'inbox' });
+  await S.syncWith(store, remote);
+  const [ev] = remote.active();
+  assert.strictEqual(ev.extendedProperties.private.bucket, 'inbox');
+
+  const deviceB = fakeStore();
+  await S.syncWith(deviceB, remote);
+  assert.strictEqual((await deviceB.getRawTasks())[0].bucket, 'inbox');
+
+  // Ein Event ganz ohne das Feld (z. B. direkt in Google angelegt, oder von einer älteren App-Version)
+  // gilt als ganz normales "To Do".
+  const legacyId = 'evLegacy';
+  remote.events.set(legacyId, { id: legacyId, summary: 'Direkt in Google', start: { date: '2031-05-05' }, updated: new Date().toISOString() });
+  const deviceC = fakeStore();
+  await S.syncWith(deviceC, remote);
+  assert.strictEqual(findByTitle(await deviceC.getRawTasks(), 'Direkt in Google').bucket, 'todo');
+});
+
+test('Abhaken eines datumslosen Tasks macht aus dem versteckten Platzhalter-Termin einen echten, sichtbaren Termin auf heute', async () => {
+  const store = fakeStore();
+  const t = await createLocal(store, { title: 'Kleinkram' });
+  await S.syncWith(store, remote);
+  assert.strictEqual(remote.active()[0].visibility, 'private'); // noch versteckt
+
+  const today = new Date().toLocaleDateString('sv-SE');
+  await doneLocal(store, t.id, true);
+  await S.syncWith(store, remote);
+  let ev = remote.active()[0];
+  assert.strictEqual(ev.start.date, today);
+  assert.strictEqual(ev.visibility, 'default'); // jetzt ein normaler, sichtbarer Termin
+  assert.strictEqual(ev.extendedProperties.private.noDate, '');
+  assert.match(ev.summary, /^✓ /);
+
+  // Rückgängig machen lässt das Datum bewusst stehen (keine automatische Rückstellung).
+  await doneLocal(store, t.id, false);
+  await S.syncWith(store, remote);
+  ev = remote.active()[0];
+  assert.strictEqual(ev.start.date, today);
+  assert.strictEqual(ev.visibility, 'default');
 });
 
 test('ZWEITES GERÄT übernimmt einen datumslosen Task korrekt (kein Platzhalterdatum sichtbar)', async () => {

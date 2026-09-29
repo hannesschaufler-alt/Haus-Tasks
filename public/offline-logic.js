@@ -8,6 +8,8 @@
 })(typeof self !== 'undefined' ? self : this, function (Recurrence) {
   const PRIORITIES = ['hoch', 'mittel', 'niedrig'];
   const ASSIGNEES = ['Caro', 'Hannes']; // feste Liste, siehe sync-core.js für die Google-Kalender-Kürzel
+  // GTD-Status: 'inbox' (Schnellerfassung, noch nicht einsortiert), 'todo', 'later' ("Später"-Liste).
+  const BUCKETS = ['inbox', 'todo', 'later'];
 
   function uid() {
     if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -32,6 +34,7 @@
       location: input.location || null,
       assignee: ASSIGNEES.includes(input.assignee) ? input.assignee : null,
       priority: PRIORITIES.includes(input.priority) ? input.priority : 'mittel',
+      bucket: BUCKETS.includes(input.bucket) ? input.bucket : 'todo',
       color: input.color || (category && categories[category]) || '9',
       notes: String(input.notes ?? ''),
       checklist: Array.isArray(input.checklist) ? input.checklist : [],
@@ -57,6 +60,11 @@
     if (patch.category && patch.category !== cur.category && !('color' in patch)) {
       next.color = categories[patch.category] || cur.color;
     }
+    // Ein Datum zu vergeben heißt „jetzt konkret“, nicht mehr „irgendwann“ – ein „Später“-Task wird dadurch
+    // automatisch wieder zu einem To-Do, außer der Aufruf ändert den Status ohnehin schon selbst.
+    if (patch.due_date && cur.bucket === 'later' && !('bucket' in patch)) {
+      next.bucket = 'todo';
+    }
     if ('recurrence' in patch) {
       next.recurrence = patch.recurrence ? Recurrence.normalizeRule(patch.recurrence, next.due_date) : null;
       if (next.recurrence && !next.series_id) next.series_id = uid();
@@ -72,7 +80,11 @@
     if (!cur) throw new Error('Task nicht gefunden');
     if (cur.done === !!done) return { task: cur, tasks, created: null };
     const ts = nowIso();
-    let updated = { ...cur, done: !!done, done_at: done ? ts : null, updated_at: ts };
+    // Ein datumsloser Task bekommt beim Abhaken das heutige Datum, sonst würde er in Google für immer
+    // versteckt bleiben (siehe NO_DATE_PLACEHOLDER in sync-core.js) statt als erledigter Termin sichtbar
+    // zu sein. Beim Rückgängig-Machen bleibt das Datum bewusst stehen (kein automatisches Zurücksetzen).
+    const due_date = done && !cur.due_date ? today() : cur.due_date;
+    let updated = { ...cur, done: !!done, done_at: done ? ts : null, due_date, updated_at: ts };
     let list = tasks.map((t) => (t.id === id ? updated : t));
     let created = null;
     if (done && cur.recurrence && cur.due_date && !cur.next_task_id) {
@@ -164,6 +176,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES,
+    ASSIGNEES, BUCKETS,
   };
 });

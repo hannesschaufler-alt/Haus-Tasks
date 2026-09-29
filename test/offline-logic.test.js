@@ -26,6 +26,25 @@ test('Zuständigkeit: nur Caro/Hannes werden übernommen, alles andere wird zu �
   assert.deepStrictEqual(L.ASSIGNEES, ['Caro', 'Hannes']);
 });
 
+test('Bucket (GTD-Status): neue Tasks landen standardmäßig in "todo", ungültige Werte auch', () => {
+  assert.strictEqual(L.createTask([], { title: 'X' }, CATS).task.bucket, 'todo');
+  assert.strictEqual(L.createTask([], { title: 'X', bucket: 'inbox' }, CATS).task.bucket, 'inbox');
+  assert.strictEqual(L.createTask([], { title: 'X', bucket: 'quatsch' }, CATS).task.bucket, 'todo');
+  assert.deepStrictEqual(L.BUCKETS, ['inbox', 'todo', 'later']);
+});
+
+test('Ein Datum zu setzen befördert einen "Später"-Task automatisch zu "To Do"', () => {
+  const { task: t0 } = L.createTask([], { title: 'X', bucket: 'later' }, CATS);
+  const { task: t1 } = L.updateTask([t0], t0.id, { due_date: '2031-01-01' }, CATS);
+  assert.strictEqual(t1.bucket, 'todo');
+  // Ändert der Aufruf den Status selbst mit, hat das Vorrang vor der Automatik.
+  const { task: t2 } = L.updateTask([t0], t0.id, { due_date: '2031-01-01', bucket: 'later' }, CATS);
+  assert.strictEqual(t2.bucket, 'later');
+  // Ohne Datumsänderung bleibt "Später" unangetastet.
+  const { task: t3 } = L.updateTask([t0], t0.id, { notes: 'x' }, CATS);
+  assert.strictEqual(t3.bucket, 'later');
+});
+
 test('Serie ohne Datum wird abgelehnt, mit Datum normalisiert', () => {
   assert.throws(() => L.createTask([], { title: 'X', recurrence: { type: 'weekly' } }, CATS), /Datum/);
   const { task } = L.createTask([], { title: 'X', due_date: '2031-09-09', recurrence: { type: 'monthly_weekday' } }, CATS);
@@ -46,6 +65,22 @@ test('setDone ist ein No-op, wenn der Status schon stimmt', () => {
   const r = L.setDone(tasks, task.id, false);
   assert.strictEqual(r.created, null);
   assert.strictEqual(r.task, task);
+});
+
+test('Abhaken eines datumslosen Tasks setzt das heutige Datum, Rückgängig lässt es stehen', () => {
+  const { task, tasks } = L.createTask([], { title: 'X' }, CATS);
+  assert.strictEqual(task.due_date, null);
+  const today = new Date().toLocaleDateString('sv-SE');
+  const r1 = L.setDone(tasks, task.id, true);
+  assert.strictEqual(r1.task.due_date, today);
+  const r2 = L.setDone(r1.tasks, task.id, false);
+  assert.strictEqual(r2.task.due_date, today); // bleibt stehen, kein automatisches Zurücksetzen
+});
+
+test('Abhaken eines Tasks mit vorhandenem Datum lässt das Datum unverändert', () => {
+  const { task, tasks } = L.createTask([], { title: 'X', due_date: '2031-06-06' }, CATS);
+  const r = L.setDone(tasks, task.id, true);
+  assert.strictEqual(r.task.due_date, '2031-06-06');
 });
 
 test('Serie: Abhaken legt den Folgetermin ab dem alten Fälligkeitsdatum an, kein Duplikat bei erneutem Abhaken', () => {

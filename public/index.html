@@ -31,6 +31,8 @@
   .wrap { max-width: 860px; margin: 0 auto; padding: 16px; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
   header a.brand { font-size: 19px; font-weight: 700; color: inherit; text-decoration: none; display: flex; align-items: center; gap: 6px; }
+  .inbox-badge { background: var(--accent); color: var(--accent-text); font-size: 11px; font-weight: 700; line-height: 1;
+    padding: 3px 7px; border-radius: 999px; }
   .sync { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
   .dot.ok { background: var(--ok); } .dot.err { background: var(--danger); }
@@ -46,18 +48,31 @@
   .icon-btn.invite { text-decoration: none; }
   .icon-btn.invite:hover { color: var(--accent); }
 
-  .navrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+  .navrow { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 14px; }
   .navblock { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: var(--card);
     border: 1px solid var(--line); border-radius: var(--radius); color: inherit; text-decoration: none; box-shadow: var(--shadow); font-weight: 600; transition: box-shadow .15s, border-color .15s; }
   .navblock:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(16,24,40,.08); }
   .navblock span { color: var(--muted); font-weight: 400; font-size: 13px; }
   .newtask { width: 100%; padding: 15px; font-size: 16px; font-weight: 700; margin-bottom: 22px; box-shadow: var(--shadow); }
 
+  /* Schnellerfassung: bewusst nur ein Titel-Feld, Enter legt sofort einen Inbox-Task an. */
+  .quick-capture { width: 100%; padding: 13px 16px; font-size: 15px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--card); color: var(--text); margin-bottom: 10px; box-shadow: var(--shadow); }
+  .quick-capture:focus { outline: none; border-color: var(--accent); }
+  .inbox-list { display: grid; gap: 8px; margin-bottom: 18px; }
+  .inbox-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 10px 12px;
+    background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius); }
+  .inbox-row .title { cursor: pointer; }
+  .inbox-row .actions { display: flex; align-items: center; gap: 4px; }
+  .badge.list-move { border: none; cursor: pointer; font: inherit; }
+
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; }
   .toolbar label { color: var(--muted); font-size: 13px; }
   .filters { margin-bottom: 14px; }
   .filters .group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
   .filters .group > b { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; width: 74px; }
+  .manage-link { text-transform: none; letter-spacing: normal; color: var(--muted); text-decoration: none; }
+  .manage-link:hover { color: var(--accent); }
   .chip { border: 1px solid var(--line); background: var(--chip); color: var(--text); padding: 3px 10px; border-radius: 999px; font-size: 13px; }
   .chip.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   select, input, textarea { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
@@ -195,7 +210,7 @@
 <body>
 <div class="wrap">
   <header>
-    <a class="brand" href="#/">🏠 Haus-Tasks</a>
+    <a class="brand" href="#/">🏠 Haus-Tasks<span class="inbox-badge" id="inboxBadge" hidden title="Unsortierte Einträge in der Inbox"></span></a>
     <div class="sync">
       <a class="icon-btn invite" href="haushalt.html" title="Haushalt einladen">👪</a>
       <span class="dot" id="syncDot"></span><span id="syncText">…</span><button class="btn small" id="syncBtn">Sync</button>
@@ -227,7 +242,7 @@ const ASSIGNEE_INITIAL = { Caro: 'C', Hannes: 'H' };
 const ASSIGNEE_COLOR = { Caro: '#e05297', Hannes: '#2f6fed' }; // nur fürs Avatar-Kürzel, unabhängig von Kategoriefarben
 const state = {
   tasks: [], cfg: null, status: null, cats: new Set(), locs: new Set(), assignees: new Set(), showDone: false, sort: 'due', expanded: new Set(),
-  lastSyncAt: null, lastSyncError: null, online: true,
+  lastSyncAt: null, lastSyncError: null, online: true, focusQuickCapture: false,
 };
 
 // Elemente ohne innerHTML bauen, damit Nutzereingaben nie als Markup gelten.
@@ -316,8 +331,8 @@ const SORTS = {
   cat: { label: 'Kategorie', fn: (a, b) => (a.category || '~').localeCompare(b.category || '~') || dueCmp(a, b) },
 };
 
-function sorted(list) {
-  const open = list.filter((t) => !t.done).sort(SORTS[state.sort].fn);
+function sorted(list, sortFn = SORTS[state.sort].fn) {
+  const open = list.filter((t) => !t.done).sort(sortFn);
   const done = list.filter((t) => t.done).sort((a, b) => (b.done_at || '').localeCompare(a.done_at || ''));
   return state.showDone ? [...open, ...done] : open;
 }
@@ -334,7 +349,7 @@ function taskRow(t) {
     dateTile(t),
     h('div', { class: 'main', onclick: () => openForm(t) },
       h('div', { class: 'title' }, t.title),
-      t.checklist.length > 0 && h('div', { class: 'meta' }, checklistBadge(t)),
+      h('div', { class: 'meta' }, t.checklist.length > 0 && checklistBadge(t), listMoveBadge(t)),
       state.expanded.has(t.id) && t.checklist.length > 0 && checklistView(t)),
     avatar(t.assignee));
 }
@@ -380,6 +395,22 @@ async function toggleDone(t, done) {
   } catch (e) { toast(e.message); reload(); }
 }
 
+// Schnelles Umsortieren zwischen "To Do" und "Später", direkt in der Zeile statt über die Detailansicht.
+function listMoveBadge(t) {
+  const bucket = t.bucket || 'todo';
+  return bucket === 'later'
+    ? h('button', { class: 'badge list-move', title: 'Zu To Do verschieben', onclick: (e) => { e.stopPropagation(); moveBucket(t, 'todo'); } }, '↑ To Do')
+    : h('button', { class: 'badge list-move', title: 'Auf Später verschieben', onclick: (e) => { e.stopPropagation(); moveBucket(t, 'later'); } }, '→ Später');
+}
+
+async function moveBucket(t, bucket) {
+  try {
+    await Offline.mutate('task', 'update', { id: t.id, patch: { bucket } });
+    await reload();
+    kickSync();
+  } catch (e) { toast(e.message); reload(); }
+}
+
 async function removeTask(t) {
   if (!confirm(`„${t.title}“ löschen? Der Kalendereintrag in Google wird ebenfalls gelöscht.`)) return;
   try {
@@ -389,8 +420,8 @@ async function removeTask(t) {
   } catch (e) { toast(e.message); }
 }
 
-function taskList(list, emptyText) {
-  const rows = sorted(list);
+function taskList(list, emptyText, sortFn) {
+  const rows = sorted(list, sortFn);
   return h('div', { class: 'list' }, rows.length ? rows.map(taskRow) : h('div', { class: 'empty' }, emptyText));
 }
 
@@ -399,21 +430,86 @@ function doneToggle() {
   return h('label', {}, h('input', { type: 'checkbox', checked: state.showDone, onchange: (e) => { state.showDone = e.target.checked; render(); } }), ' Erledigte anzeigen');
 }
 
-function chipGroup(label, names, set) {
-  return h('div', { class: 'group' }, h('b', {}, label),
+function chipGroup(label, names, set, manageHref) {
+  return h('div', { class: 'group' },
+    h('b', {}, label, manageHref && h('a', { class: 'manage-link', href: manageHref, title: `${label} verwalten` }, ' ✎')),
     names.map((n) => h('button', { class: 'chip' + (set.has(n) ? ' on' : ''), onclick: () => { set.has(n) ? set.delete(n) : set.add(n); render(); } }, n)));
+}
+
+// --- Schnellerfassung & Inbox ---
+// GTD-Prinzip: erfassen ohne nachzudenken (nur Titel, Enter), einsortieren kommt danach. Der Fokus bleibt
+// nach dem Speichern im Feld, damit man mehrere Ideen direkt hintereinander eintippen kann – da render()
+// die ganze Seite neu aufbaut, muss der Fokus über ein Flag in state gezielt wiederhergestellt werden.
+function quickCaptureInput() {
+  const input = h('input', {
+    type: 'text', class: 'quick-capture', placeholder: 'Idee oder Task eintippen, Enter zum Speichern …',
+    onkeydown: async (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const title = input.value.trim();
+      if (!title) return;
+      try {
+        await Offline.mutate('task', 'create', { input: { title, bucket: 'inbox' } });
+        state.focusQuickCapture = true;
+        await reload();
+        kickSync();
+      } catch (err) { toast(err.message); }
+    },
+  });
+  if (state.focusQuickCapture) {
+    state.focusQuickCapture = false;
+    queueMicrotask(() => input.focus());
+  }
+  return input;
+}
+
+async function triageInbox(t, patch) {
+  try {
+    await Offline.mutate('task', 'update', { id: t.id, patch });
+    await reload();
+    kickSync();
+  } catch (e) { toast(e.message); reload(); }
+}
+
+// 2-Minuten-Regel: Kleinkram direkt aus der Inbox heraus erledigen, ohne den Umweg über "To Do".
+async function completeFromInbox(t) {
+  try {
+    await Offline.mutate('task', 'update', { id: t.id, patch: { bucket: 'todo' } });
+    await Offline.mutate('task', 'done', { id: t.id, done: true });
+    await reload();
+    kickSync();
+  } catch (e) { toast(e.message); reload(); }
+}
+
+function inboxRow(t) {
+  return h('div', { class: 'inbox-row' },
+    h('span', { class: 'title', onclick: () => openForm(t) }, t.title),
+    h('div', { class: 'actions' },
+      h('button', { class: 'badge list-move', title: '2-Minuten-Regel: gleich erledigt', onclick: () => completeFromInbox(t) }, '✓'),
+      h('button', { class: 'badge list-move', title: 'Zu To Do', onclick: () => triageInbox(t, { bucket: 'todo' }) }, 'To Do'),
+      h('button', { class: 'badge list-move', title: 'Auf Später', onclick: () => triageInbox(t, { bucket: 'later' }) }, 'Später'),
+      h('button', { class: 'icon-btn', title: 'Verwerfen', onclick: () => removeTask(t) }, '✕')));
+}
+
+function inboxSection() {
+  const items = state.tasks.filter((t) => (t.bucket || 'todo') === 'inbox');
+  if (!items.length) return null;
+  return h('div', { class: 'inbox-list' }, items.map(inboxRow));
 }
 
 function homePage() {
   const open = state.tasks.filter((t) => !t.done).length;
+  const laterCount = state.tasks.filter((t) => (t.bucket || 'todo') === 'later' && !t.done).length;
   const filtered = state.tasks.filter((t) =>
+    (t.bucket || 'todo') === 'todo' &&
     (!state.cats.size || state.cats.has(t.category)) &&
     (!state.locs.size || state.locs.has(t.location)) &&
     (!state.assignees.size || state.assignees.has(t.assignee)));
   return h('div', {},
     h('div', { class: 'navrow' },
-      h('a', { class: 'navblock', href: '#/kategorien' }, 'Kategorien', h('span', {}, `${Object.keys(state.cfg.categories).length} →`)),
-      h('a', { class: 'navblock', href: '#/orte' }, 'Orte', h('span', {}, `${state.cfg.locations.length} →`))),
+      h('a', { class: 'navblock', href: '#/spaeter' }, 'Später', h('span', {}, `${laterCount} →`))),
+    quickCaptureInput(),
+    inboxSection(),
     h('button', { class: 'btn primary newtask', onclick: () => openForm(null) }, '＋ Neuen Task erstellen'),
     h('div', { class: 'toolbar' },
       h('strong', {}, `Anstehend (${open} offen)`),
@@ -423,8 +519,8 @@ function homePage() {
         Object.entries(SORTS).map(([k, s]) => h('option', { value: k, selected: k === state.sort }, s.label))),
       doneToggle()),
     h('div', { class: 'filters' },
-      chipGroup('Kategorie', Object.keys(state.cfg.categories), state.cats),
-      chipGroup('Ort', state.cfg.locations, state.locs),
+      chipGroup('Kategorie', Object.keys(state.cfg.categories), state.cats, '#/kategorien'),
+      chipGroup('Ort', state.cfg.locations, state.locs, '#/orte'),
       chipGroup('Wer', ASSIGNEES, state.assignees)),
     taskList(filtered, state.tasks.length ? 'Keine Tasks für diese Filter.' : 'Noch keine Tasks. Leg den ersten an!'));
 }
@@ -451,6 +547,19 @@ function groupPage(title, names, key, colorOf) {
       taskList(g.list, 'Keine offenen Tasks.'))));
 }
 
+// "Später"-Liste: bewusst nach Anlagedatum sortiert (älteste zuerst), nicht nach dem globalen Sortier-
+// Dropdown der Startseite – damit ältere, sonst leicht vergessene Punkte beim gelegentlichen Reinschauen
+// automatisch nach oben wandern (eine Art Mini-Weekly-Review).
+const byCreatedAsc = (a, b) => (a.created_at || '').localeCompare(b.created_at || '');
+function spaeterPage() {
+  const list = state.tasks.filter((t) => (t.bucket || 'todo') === 'later');
+  return h('div', {},
+    h('a', { class: 'backlink', href: '#/' }, '← Zurück'),
+    h('h1', {}, 'Später'),
+    h('div', { class: 'toolbar' }, h('span', { style: 'flex:1' }), doneToggle()),
+    taskList(list, 'Nichts auf Später verschoben.', byCreatedAsc));
+}
+
 function render() {
   const route = location.hash.replace(/^#\/?/, '');
   const view = $('#view');
@@ -458,7 +567,12 @@ function render() {
   view.replaceChildren(
     route === 'kategorien' ? groupPage('Kategorien', Object.keys(state.cfg.categories), 'category', (n) => n ? hex(state.cfg.categories[n]) : '#9e9e9e')
     : route === 'orte' ? groupPage('Orte', state.cfg.locations, 'location', () => 'var(--accent)')
+    : route === 'spaeter' ? spaeterPage()
     : homePage());
+  const inboxCount = state.tasks.filter((t) => (t.bucket || 'todo') === 'inbox').length;
+  const badge = $('#inboxBadge');
+  badge.hidden = inboxCount === 0;
+  badge.textContent = inboxCount;
   const s = state.status;
   $('#syncDot').className = 'dot ' + (!s || s.offline ? '' : state.lastSyncError ? 'err' : 'ok');
   $('#syncText').textContent = !s ? '' : s.offline ? `Nicht erreichbar${s.pending ? ` · ${s.pending} Änderung(en) warten` : ''}`

@@ -75,6 +75,7 @@
           series_id: t.series_id || '',
           color: t.color || '', // die „echte“ Farbe, damit sie nach einem Erledigt/Grau-Zyklus wiederhergestellt werden kann
           noDate: t.due_date ? '' : 'true', // Platzhalterdatum, kein echtes Fälligkeitsdatum
+          bucket: t.bucket || '', // GTD-Status (inbox/todo/later), siehe offline-logic.js
         },
       },
     };
@@ -105,6 +106,7 @@
       title, due_date, done, color,
       category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
       notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
+      bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo',
     };
   }
 
