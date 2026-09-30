@@ -48,8 +48,6 @@
   .icon-btn.invite { text-decoration: none; }
   .icon-btn.invite:hover { color: var(--accent); }
 
-  .newtask { width: 100%; padding: 15px; font-size: 16px; font-weight: 700; margin-bottom: 22px; box-shadow: var(--shadow); }
-
   /* Klappbare Abschnitte ("Anstehend"/"Später") – bewusst unauffälliger als der frühere Navigationsblock. */
   .section { margin-bottom: 18px; }
   .section-header { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 4px 0; user-select: none; }
@@ -66,7 +64,13 @@
     background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius); }
   .inbox-row .title { cursor: pointer; }
   .inbox-row .actions { display: flex; align-items: center; gap: 4px; }
-  .badge.list-move { border: none; cursor: pointer; font: inherit; }
+  /* Deutlich sichtbarer Rahmen statt der reinen Chip-Füllung: die sonst übliche .badge-Füllfarbe
+     (--chip) liegt hier auf einem ebenfalls schon getönten Untergrund (Inbox-Zeile/Task-Karte) und
+     ist dort kaum vom Hintergrund zu unterscheiden. */
+  .badge.list-move { border: 1px solid var(--line); background: var(--bg); color: var(--text); font-weight: 600; cursor: pointer; font: inherit; }
+  .badge.list-move:hover { border-color: var(--accent); color: var(--accent); }
+  .badge.list-move.ok { border-color: var(--ok); color: var(--ok); }
+  .badge.list-move.ok:hover { background: color-mix(in srgb, var(--ok) 15%, transparent); }
 
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; }
   .toolbar label { color: var(--muted); font-size: 13px; }
@@ -488,7 +492,7 @@ function inboxRow(t) {
   return h('div', { class: 'inbox-row' },
     h('span', { class: 'title', onclick: () => openForm(t) }, t.title),
     h('div', { class: 'actions' },
-      h('button', { class: 'badge list-move', title: '2-Minuten-Regel: gleich erledigt', onclick: () => completeFromInbox(t) }, '✓'),
+      h('button', { class: 'badge list-move ok', title: '2-Minuten-Regel: gleich erledigt', onclick: () => completeFromInbox(t) }, '✓'),
       h('button', { class: 'badge list-move', title: 'Zu To Do', onclick: () => triageInbox(t, { bucket: 'todo' }) }, 'To Do'),
       h('button', { class: 'badge list-move', title: 'Auf Später', onclick: () => triageInbox(t, { bucket: 'later' }) }, 'Später'),
       h('button', { class: 'icon-btn', title: 'Verwerfen', onclick: () => removeTask(t) }, '✕')));
@@ -520,7 +524,6 @@ function homePage() {
   return h('div', {},
     quickCaptureInput(),
     inboxSection(),
-    h('button', { class: 'btn primary newtask', onclick: () => openForm(null) }, '＋ Neuen Task erstellen'),
     h('div', { class: 'section' },
       sectionHeader('Anstehend', openCount, state.todoOpen, () => { state.todoOpen = !state.todoOpen; render(); }),
       state.todoOpen && h('div', {},
