@@ -384,14 +384,27 @@ function checklistView(t) {
       h('label', {}, h('input', { type: 'checkbox', checked: item.done, onchange: (e) => toggleItem(t, i, e.target.checked) }), h('span', {}, item.text)))));
 }
 
-async function toggleItem(t, index, done) {
-  const checklist = t.checklist.map((item, i) => (i === index ? { ...item, done } : item));
-  try {
-    const updated = await Offline.mutate('task', 'update', { id: t.id, patch: { checklist } });
-    state.tasks = state.tasks.map((x) => (x.id === updated.id ? updated : x));
-    render();
-    kickSync();
-  } catch (e) { toast(e.message); reload(); }
+// Checkliste wird als volles Array gesendet (nicht nur der eine geänderte Punkt) – wird schnell
+// hintereinander mehrfach abgehakt, würde ein zweiter Klick sonst noch mit dem Stand von VOR dem ersten
+// rechnen und dessen gerade gesetztes Häkchen beim Senden wieder rückgängig machen (stiller
+// Datenverlust, genau das war vermutlich die Ursache für den abweichenden Checklisten-Stand). Eine
+// Warteschlange pro Task serialisiert die Klicks: der nächste Toggle rechnet erst, wenn der vorherige
+// wirklich fertig gespeichert ist.
+const toggleQueue = new Map();
+function toggleItem(t, index, done) {
+  const run = async () => {
+    try {
+      const current = state.tasks.find((x) => x.id === t.id) || t;
+      const checklist = current.checklist.map((item, i) => (i === index ? { ...item, done } : item));
+      const updated = await Offline.mutate('task', 'update', { id: t.id, patch: { checklist } });
+      state.tasks = state.tasks.map((x) => (x.id === updated.id ? updated : x));
+      render();
+      kickSync();
+    } catch (e) { toast(e.message); reload(); }
+  };
+  const next = (toggleQueue.get(t.id) || Promise.resolve()).then(run);
+  toggleQueue.set(t.id, next.catch(() => {}));
+  return next;
 }
 
 async function toggleDone(t, done) {
