@@ -151,6 +151,7 @@
   .actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
   .actions .right { display: flex; gap: 8px; }
   .error { color: var(--danger); font-size: 13px; min-height: 1em; }
+  .sync-info { color: var(--muted); font-size: 11px; margin: -8px 0 10px; }
   .hint { color: var(--muted); font-size: 13px; }
 
   /* Einrichtungsbildschirme: Anmeldung, Kalender-ID */
@@ -827,10 +828,18 @@ function openForm(task) {
     } catch (ex) { err.textContent = ex.message; }
   }
 
+  // Diagnose-Zeile: hilft bei der Fehlersuche, wenn sich ein Task zwischen Geräten unterscheidet (z. B.
+  // zeigt ein abweichender "Stand" bei gleicher Event-ID sofort, dass ein Gerät eine ältere Version lokal
+  // hat statt gerade erst zu synchronisieren). Rein informativ, nichts davon wird gespeichert.
+  const syncInfo = task && h('div', { class: 'sync-info' },
+    `Sync-Stand: ${task.google_event_id ? task.google_event_id.slice(0, 10) + '…' : '– noch nie synchronisiert –'}` +
+    (task.google_updated ? ` · ${new Date(task.google_updated).toLocaleString('de-DE')}` : ''));
+
   const field = (label, ...ctl) => h('div', { class: 'field' }, h('label', {}, label), ...ctl);
   form.onsubmit = save;
   form.replaceChildren(
     h('h3', {}, task ? 'Task bearbeiten' : 'Neuer Task'),
+    syncInfo,
     field('Titel', title),
     h('div', { class: 'row2' }, field('Datum (leer = nur in der App)', date), field('Wiederholung', recType)),
     recOpts,
