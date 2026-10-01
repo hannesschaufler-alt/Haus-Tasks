@@ -988,7 +988,19 @@ function renderCalendarSetup() {
 }
 
 async function boot() {
-  if (!Auth.isSignedIn()) { renderSignIn(); return; }
+  // Nicht nur auf den zwischengespeicherten Zeitstempel schauen (der ist nach ca. einer Stunde abgelaufen,
+  // auch wenn man eigentlich noch angemeldet wäre) – erst eine echte (stille) Erneuerung versuchen. Das
+  // war der Hauptgrund, warum der Login auf dem Handy viel öfter verlangt wurde als am Desktop: dort wird
+  // die App nach dem Schließen oft komplett neu gestartet (nicht nur ein Tab im Hintergrund), und traf so
+  // viel häufiger auf einen nach Uhrzeit schon abgelaufenen, aber eigentlich noch erneuerbaren Token.
+  try {
+    await Auth.getToken();
+  } catch (e) {
+    if (e.authRequired || !Auth.hasEverSignedIn()) { renderSignIn(); return; }
+    // Sonst: keine Verbindung gerade, aber schon mal angemeldet gewesen – mit dem zwischengespeicherten
+    // Stand weitermachen (reload() unten zeigt die lokal gespeicherten Tasks), kein erzwungener Login nur
+    // wegen eines Verbindungsproblems beim Start.
+  }
   if (!Offline.getCalendarId()) { renderCalendarSetup(); return; }
 
   let cfg = await Offline.getConfig();

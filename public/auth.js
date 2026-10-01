@@ -114,8 +114,16 @@
   // erneute, sichtbare Anmeldung nötig wäre (z. B. Zugriff wurde bei Google widerrufen) – die Oberfläche
   // zeigt dann wieder den Anmelde-Button. Die 5-Minuten-Schwelle (statt erst kurz vor Ablauf) gibt der
   // stillen Erneuerung etwas Luft, bevor der Token wirklich abgelaufen ist.
+  //
+  // Wichtig: fehlt gerade die Verbindung (häufig auf dem Handy – Mobilfunk-Wechsel, schwaches Netz),
+  // ist das kein „abgemeldet“, sondern nur vorübergehend nicht erreichbar – der gespeicherte Token
+  // bleibt dafür unangetastet, authRequired wird nur bei einer tatsächlichen Ablehnung durch Google
+  // gesetzt. Sonst würde jeder kurze Verbindungsaussetzer wie ein Logout aussehen.
   async function getToken() {
     if (current && current.expires_at > Date.now() + 5 * 60 * 1000) return current.access_token;
+    if (!navigator.onLine) {
+      throw Object.assign(new Error('Keine Verbindung – Zugriffstoken kann gerade nicht erneuert werden.'), { offline: true });
+    }
     await ensureClient();
     try {
       return (await requestToken('')).access_token; // '' = versucht es zunächst still, ohne Pop-up
@@ -129,10 +137,18 @@
     return !!current;
   }
 
+  // Ob dieses Gerät sich schon mal angemeldet hatte, unabhängig davon, ob der Zugriffstoken gerade (nach
+  // Uhrzeit) abgelaufen ist – anders als isSignedIn() bleibt das auch nach Ablauf wahr, bis zu einer
+  // echten Abmeldung oder einer tatsächlichen Ablehnung durch Google. Für boot(): ganz ohne Verbindung
+  // lieber die zwischengespeicherte Ansicht zeigen als sofort den vollen Anmelde-Bildschirm.
+  function hasEverSignedIn() {
+    try { return !!localStorage.getItem(STORAGE_KEY); } catch { return false; }
+  }
+
   function onChange(cb) {
     listeners.add(cb);
     return () => listeners.delete(cb);
   }
 
-  root.Auth = { signIn, signOut, getToken, isSignedIn, onChange };
+  root.Auth = { signIn, signOut, getToken, isSignedIn, hasEverSignedIn, onChange };
 })(window);
