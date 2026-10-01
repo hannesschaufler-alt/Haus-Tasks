@@ -243,5 +243,8 @@
     sync,
     getCalendarId,
     setCalendarId,
+    // Nur für die Debug-Ansicht (#/debug): roher Stand ohne die Aufräum-/Filterlogik von getCachedTasks().
+    getRawTasks,
+    getOutbox,
   };
 })(typeof window !== 'undefined' ? window : this);
