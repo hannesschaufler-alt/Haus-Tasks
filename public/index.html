@@ -602,12 +602,15 @@ function renderDebugPage(view) {
     results.replaceChildren(...matches.map((t) => pre(JSON.stringify(t, null, 2))));
     const outbox = await Offline.getOutbox();
     outboxBox.textContent = outbox.length ? JSON.stringify(outbox, null, 2) : '(leer – keine wartenden Änderungen)';
+    lastSyncBox.textContent = state.lastSyncResult ? JSON.stringify(state.lastSyncResult, null, 2) : '(noch kein Sync in dieser Sitzung – einmal auf „Sync“ tippen)';
   }
   search.addEventListener('input', paint);
+  const refreshBtn = h('button', { type: 'button', class: 'btn small', style: 'margin-bottom:10px;', onclick: paint }, '🔄 Aktualisieren');
 
   view.replaceChildren(h('div', {},
     h('a', { class: 'backlink', href: '#/' }, '← Zurück'),
     h('h1', {}, 'Debug'),
+    refreshBtn,
     h('h2', {}, 'Warteschlange (Outbox) – wartende, noch nicht gesendete Änderungen'), outboxBox,
     h('h2', {}, 'Letztes Sync-Ergebnis dieser Sitzung'), lastSyncBox,
     h('h2', {}, 'Task-Rohdaten durchsuchen'), search, results));

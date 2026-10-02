@@ -294,7 +294,10 @@
           await store.removeOutboxEntry(entry.seq);
           continue;
         }
-        return { sent, failed, clashes, aborted: true }; // Netzwerkfehler: Rest bleibt gespeichert
+        // Netzwerkfehler (oder ein unerwarteter Fehler ohne HTTP-Status): Rest bleibt gespeichert, versucht
+        // es beim nächsten Sync erneut. abortReason nur für die Debug-Ansicht (#/debug) – zeigt sonst
+        // unsichtbar genau denselben Eintrag immer wieder, ohne erkennbar zu machen, woran es liegt.
+        return { sent, failed, clashes, aborted: true, abortReason: { entry, message: e.message, status: httpStatus(e) } };
       }
     }
     return { sent, failed, clashes, aborted: false };
@@ -323,9 +326,9 @@
     const outboxBefore = await store.getOutbox();
     const dirtyIds = new Set(outboxBefore.map((e) => e.taskId));
     const pulled = await pull(store, remote, dirtyIds);
-    const { sent, failed, clashes, aborted } = await push(store, remote);
+    const { sent, failed, clashes, aborted, abortReason } = await push(store, remote);
     await syncConfig(store, remote).catch(() => {}); // Konfiguration ist nice-to-have, darf den Task-Sync nicht blockieren
-    return { pulled, pushed: sent.length, failed, clashes, aborted };
+    return { pulled, pushed: sent.length, failed, clashes, aborted, abortReason };
   }
 
   return { syncWith, pull, push, syncConfig, eventBody, taskShapeFromEvent, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
