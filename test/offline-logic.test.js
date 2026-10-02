@@ -65,6 +65,24 @@ test('Das Datum eines Tasks mit Uhrzeit entfernen löscht automatisch auch die U
   assert.throws(() => L.updateTask([{ ...t0, due_date: null, due_time: null }], t0.id, { due_time: '09:00' }, CATS), /Uhrzeit/);
 });
 
+test('Endzeit: nur zusammen mit Startzeit, nur wenn sie wirklich danach liegt', () => {
+  assert.strictEqual(L.createTask([], { title: 'X', due_date: '2031-09-09', due_end_time: '15:00' }, CATS).task.due_end_time, null);
+  assert.strictEqual(
+    L.createTask([], { title: 'X', due_date: '2031-09-09', due_time: '14:00', due_end_time: '13:00' }, CATS).task.due_end_time,
+    null, // vor der Startzeit: verworfen statt negative Dauer
+  );
+  assert.strictEqual(
+    L.createTask([], { title: 'X', due_date: '2031-09-09', due_time: '14:00', due_end_time: '15:30' }, CATS).task.due_end_time,
+    '15:30',
+  );
+});
+
+test('Die Startuhrzeit eines Termins mit Endzeit entfernen löscht auch die Endzeit mit', () => {
+  const { task: t0 } = L.createTask([], { title: 'X', due_date: '2031-09-09', due_time: '14:00', due_end_time: '15:30' }, CATS);
+  const { task: t1 } = L.updateTask([t0], t0.id, { due_time: null }, CATS);
+  assert.strictEqual(t1.due_end_time, null);
+});
+
 test('Update übernimmt die Kategoriefarbe nur, wenn keine Farbe mitgegeben wurde', () => {
   const { task: t0 } = L.createTask([], { title: 'X', category: 'Elektrik' }, CATS);
   const { task: t1 } = L.updateTask([t0], t0.id, { category: 'Garten' }, CATS);

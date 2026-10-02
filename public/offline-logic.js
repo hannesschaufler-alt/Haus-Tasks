@@ -31,6 +31,7 @@
       title,
       due_date: input.due_date || null,
       due_time: input.due_date && input.due_time ? input.due_time : null, // ohne Datum ergibt eine Uhrzeit nichts
+      due_end_time: input.due_date && input.due_time && input.due_end_time && input.due_end_time > input.due_time ? input.due_end_time : null,
       category,
       location: input.location || null,
       assignee: ASSIGNEES.includes(input.assignee) ? input.assignee : null,
@@ -66,8 +67,12 @@
     if (patch.due_date && cur.bucket === 'later' && !('bucket' in patch)) {
       next.bucket = 'todo';
     }
-    // Ohne Datum ergibt eine Uhrzeit nichts – wird das Datum entfernt, fällt die Uhrzeit automatisch mit weg.
+    // Ohne Datum ergibt eine Uhrzeit nichts – wird das Datum entfernt, fallen Uhrzeit und Endzeit automatisch
+    // mit weg. Ohne Startuhrzeit ergibt eine Endzeit ebenso nichts, und eine Endzeit vor/gleich der
+    // Startzeit wird verworfen statt einen Termin mit negativer oder leerer Dauer zu erzeugen.
     if ('due_date' in patch && !patch.due_date && !('due_time' in patch)) next.due_time = null;
+    if (!next.due_time) next.due_end_time = null;
+    else if (next.due_end_time && next.due_end_time <= next.due_time) next.due_end_time = null;
     if ('recurrence' in patch) {
       next.recurrence = patch.recurrence ? Recurrence.normalizeRule(patch.recurrence, next.due_date) : null;
       if (next.recurrence && !next.series_id) next.series_id = uid();

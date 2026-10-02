@@ -321,11 +321,12 @@ function dateTile(t) {
   const diff = dayDiff(t.due_date);
   const cls = t.done ? ' done' : diff < 0 ? ' late' : diff <= 1 ? ' soon' : '';
   const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? ` ’${String(d.getFullYear()).slice(2)}` : '';
-  return h('div', { class: 'date' + cls, title: fmtDate(t.due_date) + (t.due_time ? `, ${t.due_time} Uhr` : '') + ' – antippen zum Ändern', onclick: openPicker },
+  const timeLabel = t.due_time && (t.due_end_time ? `${t.due_time}–${t.due_end_time}` : t.due_time);
+  return h('div', { class: 'date' + cls, title: fmtDate(t.due_date) + (t.due_time ? `, ${timeLabel} Uhr` : '') + ' – antippen zum Ändern', onclick: openPicker },
     h('span', { class: 'wd' }, d.toLocaleDateString('de-DE', { weekday: 'short' }).replace('.', '')),
     h('span', { class: 'day' }, String(d.getDate())),
     h('span', { class: 'mon' }, d.toLocaleDateString('de-DE', { month: 'short' }).replace('.', '') + yearSuffix),
-    t.due_time && h('span', { class: 'time' }, t.due_time),
+    timeLabel && h('span', { class: 'time' }, timeLabel),
     picker);
 }
 
@@ -820,7 +821,7 @@ function makeChecklistEditor(initial) {
 
 function openForm(task) {
   const cfg = state.cfg;
-  const t = task || { title: '', due_date: '', due_time: '', category: '', location: '', assignee: null, priority: 'mittel', color: '9', notes: '', recurrence: null };
+  const t = task || { title: '', due_date: '', due_time: '', due_end_time: '', category: '', location: '', assignee: null, priority: 'mittel', color: '9', notes: '', recurrence: null };
   let colorTouched = !!task;
   const r = t.recurrence;
 
@@ -828,7 +829,17 @@ function openForm(task) {
   const date = h('input', { type: 'date', value: t.due_date || '' });
   // Nur sinnvoll mit Datum – z. B. wenn aus einer Vorbereitung ein echter Termin mit fixer Zeit wird.
   const time = h('input', { type: 'time', value: t.due_time || '', disabled: !t.due_date });
-  date.addEventListener('change', () => { time.disabled = !date.value; if (!date.value) time.value = ''; });
+  // Endzeit wiederum nur sinnvoll mit Startzeit – ohne eigene Angabe gilt eine Stunde als Vorgabe (siehe
+  // eventBody()), muss hier also nicht zwingend ausgefüllt werden.
+  const endTime = h('input', { type: 'time', value: t.due_end_time || '', disabled: !t.due_time, placeholder: '+1 Std.' });
+  const syncTimeFields = () => {
+    time.disabled = !date.value;
+    if (!date.value) time.value = '';
+    endTime.disabled = !time.value;
+    if (!time.value) endTime.value = '';
+  };
+  date.addEventListener('change', syncTimeFields);
+  time.addEventListener('change', syncTimeFields);
   const cat = h('select', {}, h('option', { value: '' }, '– keine –'), Object.keys(cfg.categories).map((c) => h('option', { value: c, selected: c === t.category }, c)));
   const loc = h('select', {}, h('option', { value: '' }, '– keiner –'), cfg.locations.map((l) => h('option', { value: l, selected: l === t.location }, l)));
   const prio = h('select', {}, cfg.priorities.map((p) => h('option', { value: p, selected: p === t.priority }, p)));
@@ -874,6 +885,7 @@ function openForm(task) {
       : ty === 'monthly_weekday' ? { type: ty, interval: iv, nth: Number(nth.value), weekday: Number(wd.value) }
       : ty === 'monthly_day' ? { type: ty, interval: iv, day: Number(mday.value) } : { type: ty, interval: iv };
     const body = { title: title.value, due_date: date.value || null, due_time: date.value && time.value ? time.value : null,
+      due_end_time: date.value && time.value && endTime.value ? endTime.value : null,
       category: cat.value || null, location: loc.value || null,
       assignee: who.get(), priority: prio.value, color: picker.get(), notes: notes.value, checklist: chk.get(), recurrence };
     // Bei einer Bearbeitung nur die tatsächlich geänderten Felder senden (siehe diffPatch); beim Neuanlegen
@@ -901,6 +913,7 @@ function openForm(task) {
     syncInfo,
     field('Titel', title),
     h('div', { class: 'row2' }, field('Datum (leer = nur in der App)', date), field('Uhrzeit (optional)', time)),
+    field('Ende (optional, sonst +1 Std.)', endTime),
     field('Wiederholung', recType),
     recOpts,
     h('div', { class: 'row2' }, field('Kategorie', cat), field('Ort', loc)),

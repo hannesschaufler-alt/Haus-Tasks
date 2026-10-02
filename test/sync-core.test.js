@@ -180,6 +180,26 @@ test('Uhrzeit in der App wieder entfernen macht aus dem Termin wieder einen ganz
   assert.strictEqual(ev.end.dateTime, null);
 });
 
+test('Eine eigene Dauer wird gesendet und beim zweiten Gerät korrekt zurückgelesen, ohne Dauer gilt eine Stunde', async () => {
+  const store = fakeStore();
+  const t = await createLocal(store, { title: 'Besprechung', due_date: '2031-04-01', due_time: '14:00', due_end_time: '16:00' });
+  await S.syncWith(store, remote);
+  const ev = remote.active()[0];
+  assert.ok(ev.end.dateTime.startsWith('2031-04-01T16:00'));
+
+  const deviceB = fakeStore();
+  await S.syncWith(deviceB, remote);
+  const onB = (await deviceB.getRawTasks())[0];
+  assert.strictEqual(onB.due_time, '14:00');
+  assert.strictEqual(onB.due_end_time, '16:00');
+
+  // Dauer wieder entfernen: zurück zur Ein-Stunden-Vorgabe, nicht die alte Endzeit behalten.
+  await updateLocal(store, t.id, { due_end_time: null });
+  await S.syncWith(store, remote);
+  const ev2 = remote.active()[0];
+  assert.ok(ev2.end.dateTime.startsWith('2031-04-01T15:00')); // 14:00 + 1 Std. Vorgabe
+});
+
 test('Task ohne Datum synct trotzdem (versteckter Platzhalter-Termin), Datum setzen/entfernen wirkt in Google', async () => {
   const store = fakeStore();
   const t = await createLocal(store, { title: 'Irgendwann' });

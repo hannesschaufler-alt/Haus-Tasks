@@ -63,11 +63,11 @@
     // Beim Wechsel zwischen "ganztägig" (date) und "mit Uhrzeit" (dateTime) muss die jeweils andere
     // Darstellung explizit auf null gesetzt werden, nicht nur weggelassen: Google lässt sie sonst von
     // einer vorherigen Version des Termins stehen und lehnt die dann widersprüchliche Kombination ab
-    // ("Invalid start time"). Eine Stunde Dauer ist nur eine Vorgabe, Haus-Tasks kennt kein eigenes Ende.
+    // ("Invalid start time"). Ohne eigene Endzeit gilt eine Stunde Dauer als Vorgabe.
     const hasTime = !!(t.due_date && t.due_time);
     let start, end;
     if (hasTime) {
-      const endAt = Recurrence.addMinutes(t.due_date, t.due_time, 60);
+      const endAt = t.due_end_time ? { date: t.due_date, time: t.due_end_time } : Recurrence.addMinutes(t.due_date, t.due_time, 60);
       start = { date: null, dateTime: `${t.due_date}T${t.due_time}:00`, timeZone: TIME_ZONE };
       end = { date: null, dateTime: `${endAt.date}T${endAt.time}:00`, timeZone: TIME_ZONE };
     } else {
@@ -125,8 +125,11 @@
     const startDate = ev.start?.date || (ev.start?.dateTime ? ev.start.dateTime.slice(0, 10) : null);
     const due_date = p.noDate === 'true' ? null : (startDate || null);
     const due_time = due_date && ev.start?.dateTime ? ev.start.dateTime.slice(11, 16) : null;
+    // Nur übernehmen, wenn die Endzeit auf denselben Tag fällt – ein über Mitternacht gehender Termin
+    // wird (wie beim Anlegen, siehe eventBody()) nicht unterstützt, dann lieber die Vorgabe (eine Stunde).
+    const due_end_time = due_time && ev.end?.dateTime && ev.end.dateTime.slice(0, 10) === due_date ? ev.end.dateTime.slice(11, 16) : null;
     return {
-      title, due_date, due_time, done, color,
+      title, due_date, due_time, due_end_time, done, color,
       category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
       notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
       bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo',
