@@ -133,10 +133,32 @@ test('Task mit Datum wird als ganztägiges Event mit versteckten Zusatzfeldern a
   await S.syncWith(store, remote);
   const [ev] = remote.active();
   assert.strictEqual(ev.summary, 'Steckdose setzen');
-  assert.deepStrictEqual(ev.start, { date: '2031-03-10' });
+  assert.deepStrictEqual(ev.start, { date: '2031-03-10', dateTime: null, timeZone: null });
   assert.strictEqual(ev.colorId, '5');
   assert.strictEqual(ev.extendedProperties.private.category, 'Elektrik');
   assert.strictEqual((await store.getOutbox()).length, 0);
+});
+
+test('Ein Termin, der direkt in Google von ganztägig auf "mit Uhrzeit" umgestellt wurde, lässt sich wieder zu ganztägig zurückpatchen', async () => {
+  // Echter Vorfall: Google lehnt einen Patch mit "Invalid start time" ab, wenn ein Termin dateTime/
+  // timeZone von einer früheren Version noch hat und der Patch nur "date" setzt, ohne die beiden
+  // explizit zu löschen (Google ersetzt start/end bei einem Patch nicht automatisch vollständig).
+  const store = fakeStore();
+  const t = await createLocal(store, { title: 'Mit Uhrzeit verdreht', due_date: '2031-04-01' });
+  await S.syncWith(store, remote);
+  const [ev] = remote.active();
+  remote.editDirect(ev.id, {
+    start: { dateTime: '2031-04-01T10:00:00+02:00', timeZone: 'Europe/Vienna' },
+    end: { dateTime: '2031-04-01T11:00:00+02:00', timeZone: 'Europe/Vienna' },
+  });
+
+  await updateLocal(store, t.id, { notes: 'kurz was geändert' });
+  await S.syncWith(store, remote);
+  const after = remote.active()[0];
+  assert.strictEqual(after.start.date, '2031-04-01');
+  assert.strictEqual(after.start.dateTime, null);
+  assert.strictEqual(after.end.dateTime, null);
+  assert.strictEqual(after.start.timeZone, null);
 });
 
 test('Task ohne Datum synct trotzdem (versteckter Platzhalter-Termin), Datum setzen/entfernen wirkt in Google', async () => {
@@ -221,6 +243,24 @@ test('ZWEITES GERÄT übernimmt einen datumslosen Task korrekt (kein Platzhalter
   assert.strictEqual(onB.title, 'Muffe kaufen');
   assert.strictEqual(onB.due_date, null);
   assert.strictEqual(onB.notes, 'Baumarkt');
+});
+
+test('ZWEITES GERÄT übernimmt das Datum auch, wenn der Termin zwischenzeitlich eine Uhrzeit bekommen hat', async () => {
+  const deviceA = fakeStore();
+  const deviceB = fakeStore();
+  await createLocal(deviceA, { title: 'Termin verdreht', due_date: '2031-05-05' });
+  await S.syncWith(deviceA, remote);
+  await S.syncWith(deviceB, remote); // Gerät B kennt den Task schon, bevor er verdreht wird
+
+  const [ev] = remote.active();
+  remote.editDirect(ev.id, {
+    start: { dateTime: '2031-05-05T09:00:00+02:00', timeZone: 'Europe/Vienna' },
+    end: { dateTime: '2031-05-05T09:30:00+02:00', timeZone: 'Europe/Vienna' },
+  });
+
+  await S.syncWith(deviceB, remote);
+  const onB = findByTitle(await deviceB.getRawTasks(), 'Termin verdreht');
+  assert.strictEqual(onB.due_date, '2031-05-05'); // aus dateTime gerettet, nicht auf den Platzhalter gefallen
 });
 
 
