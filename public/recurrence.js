@@ -24,6 +24,16 @@ function addDays(iso, n) {
   return fmt(y, m, d + n);
 }
 
+// Für Termine mit Uhrzeit: addiert Minuten auf ein Datum+Uhrzeit-Paar, rollt dabei korrekt über Mitternacht
+// in den nächsten Tag (z. B. für das Ende eines um 23:30 beginnenden, einstündigen Termins).
+function addMinutes(dateIso, time, n) {
+  const { y, m, d } = parse(dateIso);
+  const [hh, mm] = time.split(':').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, hh, mm + n));
+  const pad = (x) => String(x).padStart(2, '0');
+  return { date: dt.toISOString().slice(0, 10), time: `${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}` };
+}
+
 // Datum des n-ten Wochentags (0 = Sonntag) in einem Monat; nth -1 = letzter.
 function nthWeekday(y, m, nth, weekday) {
   if (nth === -1) {
@@ -86,7 +96,7 @@ function normalizeRule(rule, dueDate) {
 
 // Läuft sowohl unter Node (Server, Tests) als auch als <script> im Browser (Offline-Logik der App).
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { nextOccurrence, normalizeRule, addDays };
+  module.exports = { nextOccurrence, normalizeRule, addDays, addMinutes };
 } else if (typeof self !== 'undefined') {
-  self.Recurrence = { nextOccurrence, normalizeRule, addDays };
+  self.Recurrence = { nextOccurrence, normalizeRule, addDays, addMinutes };
 }

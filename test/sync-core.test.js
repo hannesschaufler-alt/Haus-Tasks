@@ -139,12 +139,12 @@ test('Task mit Datum wird als ganztägiges Event mit versteckten Zusatzfeldern a
   assert.strictEqual((await store.getOutbox()).length, 0);
 });
 
-test('Ein Termin, der direkt in Google von ganztägig auf "mit Uhrzeit" umgestellt wurde, lässt sich wieder zu ganztägig zurückpatchen', async () => {
-  // Echter Vorfall: Google lehnt einen Patch mit "Invalid start time" ab, wenn ein Termin dateTime/
-  // timeZone von einer früheren Version noch hat und der Patch nur "date" setzt, ohne die beiden
-  // explizit zu löschen (Google ersetzt start/end bei einem Patch nicht automatisch vollständig).
+test('Eine direkt in Google hinzugefügte Uhrzeit wird übernommen, eine spätere Änderung verdirbt das Event nicht', async () => {
+  // Echter Vorfall (Auslöser für das due_time-Feature): aus einem vorbereitenden Task wurde ein echter
+  // Termin mit fixer Zeit, direkt in Google eingetragen. Google lehnt einen Patch, der nur "date" setzt,
+  // ohne ein vorhandenes dateTime/timeZone explizit zu löschen, mit "Invalid start time" ab.
   const store = fakeStore();
-  const t = await createLocal(store, { title: 'Mit Uhrzeit verdreht', due_date: '2031-04-01' });
+  const t = await createLocal(store, { title: 'Wird zum Termin', due_date: '2031-04-01' });
   await S.syncWith(store, remote);
   const [ev] = remote.active();
   remote.editDirect(ev.id, {
@@ -152,13 +152,32 @@ test('Ein Termin, der direkt in Google von ganztägig auf "mit Uhrzeit" umgestel
     end: { dateTime: '2031-04-01T11:00:00+02:00', timeZone: 'Europe/Vienna' },
   });
 
+  await S.syncWith(store, remote); // pullt die Uhrzeit
+  const pulled = (await store.getRawTasks()).find((x) => x.id === t.id);
+  assert.strictEqual(pulled.due_time, '10:00');
+
+  // Eine spätere, unabhängige Änderung darf das Event nicht in einen widersprüchlichen Zustand bringen.
   await updateLocal(store, t.id, { notes: 'kurz was geändert' });
   await S.syncWith(store, remote);
   const after = remote.active()[0];
-  assert.strictEqual(after.start.date, '2031-04-01');
-  assert.strictEqual(after.start.dateTime, null);
-  assert.strictEqual(after.end.dateTime, null);
-  assert.strictEqual(after.start.timeZone, null);
+  assert.strictEqual(after.start.date, null);
+  assert.ok(after.start.dateTime.startsWith('2031-04-01T10:00'));
+});
+
+test('Uhrzeit in der App wieder entfernen macht aus dem Termin wieder einen ganztägigen', async () => {
+  const store = fakeStore();
+  const t = await createLocal(store, { title: 'Mit Uhrzeit', due_date: '2031-04-01', due_time: '14:30' });
+  await S.syncWith(store, remote);
+  let ev = remote.active()[0];
+  assert.strictEqual(ev.start.date, null);
+  assert.ok(ev.start.dateTime.startsWith('2031-04-01T14:30'));
+
+  await updateLocal(store, t.id, { due_time: null });
+  await S.syncWith(store, remote);
+  ev = remote.active()[0];
+  assert.strictEqual(ev.start.date, '2031-04-01');
+  assert.strictEqual(ev.start.dateTime, null);
+  assert.strictEqual(ev.end.dateTime, null);
 });
 
 test('Task ohne Datum synct trotzdem (versteckter Platzhalter-Termin), Datum setzen/entfernen wirkt in Google', async () => {

@@ -38,6 +38,10 @@
   // mehreren unabhängigen Geräte-Installationen ist Google der einzige gemeinsame Speicherort.
   const NO_DATE_PLACEHOLDER = '1970-01-01';
 
+  // Für Tasks mit Uhrzeit (siehe eventBody()): die Zeitzone des Geräts, auf dem gerade gesynct wird – damit
+  // ist das Gerät maßgeblich, nicht ein im Code festgelegter Ort, falls Haus-Tasks mal anderswo läuft.
+  const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
   // Zuständigkeit steht zusätzlich sichtbar als Kürzel hinter dem Titel im Kalender (Wunsch: auf einen
   // Blick erkennbar, auch in Googles eigener App). extendedProperties.private.assignee bleibt trotzdem
   // die verlässliche Quelle; das Kürzel im Titel ist nur die Anzeige.
@@ -56,14 +60,23 @@
     // Zusatzinfos wieder auslesen. „private“ heißt hier: nur für diese App sichtbar, nicht personenbezogen.
     const initial = t.assignee && ASSIGNEE_INITIAL[t.assignee];
     const due = t.due_date || NO_DATE_PLACEHOLDER;
-    // dateTime/timeZone müssen explizit auf null gesetzt werden, nicht nur weggelassen: Google lässt sie
-    // sonst von einer vorherigen Version des Termins stehen (z. B. wenn jemand direkt in Google aus dem
-    // ganztägigen Termin einen mit Uhrzeit gemacht hat) und lehnt die dann widersprüchliche Kombination
-    // aus "date" und übriggebliebenem "dateTime" bei jedem weiteren Patch mit "Invalid start time" ab.
+    // Beim Wechsel zwischen "ganztägig" (date) und "mit Uhrzeit" (dateTime) muss die jeweils andere
+    // Darstellung explizit auf null gesetzt werden, nicht nur weggelassen: Google lässt sie sonst von
+    // einer vorherigen Version des Termins stehen und lehnt die dann widersprüchliche Kombination ab
+    // ("Invalid start time"). Eine Stunde Dauer ist nur eine Vorgabe, Haus-Tasks kennt kein eigenes Ende.
+    const hasTime = !!(t.due_date && t.due_time);
+    let start, end;
+    if (hasTime) {
+      const endAt = Recurrence.addMinutes(t.due_date, t.due_time, 60);
+      start = { date: null, dateTime: `${t.due_date}T${t.due_time}:00`, timeZone: TIME_ZONE };
+      end = { date: null, dateTime: `${endAt.date}T${endAt.time}:00`, timeZone: TIME_ZONE };
+    } else {
+      start = { date: due, dateTime: null, timeZone: null };
+      end = { date: Recurrence.addDays(due, 1), dateTime: null, timeZone: null }; // Ende ganztägiger Events ist exklusiv
+    }
     return {
       summary: (t.done ? DONE_PREFIX : '') + t.title + (initial ? ` (${initial})` : ''),
-      start: { date: due, dateTime: null, timeZone: null },
-      end: { date: Recurrence.addDays(due, 1), dateTime: null, timeZone: null }, // Ende ganztägiger Events ist exklusiv
+      start, end,
       colorId: t.done ? DONE_COLOR : t.color,
       transparency: 'transparent', // blockiert die Verfügbarkeit nicht
       visibility: t.due_date ? 'default' : 'private', // Platzhalter-Termin möglichst unauffällig
@@ -105,14 +118,15 @@
     try { checklist = p.checklist ? JSON.parse(p.checklist) : []; } catch { /* fremder/kaputter Wert: ignorieren */ }
     try { recurrence = p.recurrence ? JSON.parse(p.recurrence) : null; } catch { /* dito */ }
     const color = (!done && p.color) || (ev.colorId && ev.colorId !== DONE_COLOR ? ev.colorId : null) || p.color || '9';
-    // ev.start.date fehlt, wenn der Termin (z. B. durch eine direkte Bearbeitung in Google) eine Uhrzeit
-    // bekommen hat (start.dateTime statt start.date) – der Tag selbst ist trotzdem brauchbar, einfach den
-    // Datumsanteil nehmen. Ohne diesen Rückfall würde ein Merge das Datum sonst auf den Platzhalter
-    // zurücksetzen (siehe eventBody(), NO_DATE_PLACEHOLDER), nicht nur den Patch ablehnen.
+    // ev.start.date fehlt, wenn der Termin eine Uhrzeit hat (start.dateTime statt start.date) – entweder
+    // bewusst (Task mit Uhrzeit, siehe eventBody()) oder weil jemand direkt in Google eine Uhrzeit
+    // draufgesetzt hat. Der Datumsanteil ist so oder so brauchbar, einfach daraus nehmen – ohne diesen
+    // Rückfall würde ein Merge das Datum sonst auf den Platzhalter zurücksetzen, nicht nur den Patch ablehnen.
     const startDate = ev.start?.date || (ev.start?.dateTime ? ev.start.dateTime.slice(0, 10) : null);
     const due_date = p.noDate === 'true' ? null : (startDate || null);
+    const due_time = due_date && ev.start?.dateTime ? ev.start.dateTime.slice(11, 16) : null;
     return {
-      title, due_date, done, color,
+      title, due_date, due_time, done, color,
       category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
       notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
       bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo',
@@ -140,12 +154,12 @@
       if (!row) return { tasks, changed: false };
       return { tasks: tasks.filter((t) => t.id !== row.id), changed: true };
     }
-    // Ein neuer, bisher unbekannter Termin mit Uhrzeit wird nicht als Task übernommen (vermutlich direkt
-    // in Google angelegt, kein Haus-Task). Ein bereits bekannter Task (gleiches Event) wird aber auch dann
-    // aktualisiert, wenn er zwischenzeitlich eine Uhrzeit bekommen hat (z. B. durch eine direkte Google-
-    // Bearbeitung) – sonst würde dieses eine Gerät ihn ab da für immer ignorieren, obwohl taskShapeFromEvent()
-    // den Datumsanteil aus dateTime durchaus noch retten kann.
-    if (!row && !ev.start?.date) return { tasks, changed: false };
+    // Ein fremder Termin mit Uhrzeit (jemand hat ihn direkt in Google angelegt) wird nicht als Task
+    // übernommen. Ein eigener Haus-Tasks-Termin MIT Uhrzeit (erkennbar an extendedProperties.private,
+    // die jeder App-eigene Termin hat – egal ob bewusst mit Uhrzeit angelegt oder nachträglich durch eine
+    // direkte Google-Bearbeitung dorthin „verrutscht“) wird dagegen ganz normal übernommen/aktualisiert.
+    const isOwnEvent = !!ev.extendedProperties?.private && 'priority' in ev.extendedProperties.private;
+    if (!ev.start?.date && !isOwnEvent) return { tasks, changed: false };
     if (ev.recurrence) return { tasks, changed: false }; // wiederkehrende Google-Events bleiben ignoriert
 
     const shape = taskShapeFromEvent(ev);

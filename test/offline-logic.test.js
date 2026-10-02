@@ -52,6 +52,19 @@ test('Serie ohne Datum wird abgelehnt, mit Datum normalisiert', () => {
   assert.ok(task.series_id);
 });
 
+test('Uhrzeit nur zusammen mit einem Datum: ohne Datum wird sie verworfen, nicht angenommen', () => {
+  assert.strictEqual(L.createTask([], { title: 'X', due_time: '14:30' }, CATS).task.due_time, null);
+  assert.strictEqual(L.createTask([], { title: 'X', due_date: '2031-09-09', due_time: '14:30' }, CATS).task.due_time, '14:30');
+});
+
+test('Das Datum eines Tasks mit Uhrzeit entfernen löscht automatisch auch die Uhrzeit', () => {
+  const { task: t0 } = L.createTask([], { title: 'X', due_date: '2031-09-09', due_time: '14:30' }, CATS);
+  const { task: t1 } = L.updateTask([t0], t0.id, { due_date: null }, CATS);
+  assert.strictEqual(t1.due_time, null);
+  // Eine Uhrzeit ohne (verbleibendes) Datum zu setzen bleibt abgelehnt, genau wie bei einer Serie.
+  assert.throws(() => L.updateTask([{ ...t0, due_date: null, due_time: null }], t0.id, { due_time: '09:00' }, CATS), /Uhrzeit/);
+});
+
 test('Update übernimmt die Kategoriefarbe nur, wenn keine Farbe mitgegeben wurde', () => {
   const { task: t0 } = L.createTask([], { title: 'X', category: 'Elektrik' }, CATS);
   const { task: t1 } = L.updateTask([t0], t0.id, { category: 'Garten' }, CATS);
