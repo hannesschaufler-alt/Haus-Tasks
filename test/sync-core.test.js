@@ -93,7 +93,10 @@ async function updateLocal(store, id, patch, categories = {}) {
   await store.saveRawTasks(tasks);
   // Wie Offline.mutate() im Browser: Nebeneffekte von updateTask() (z. B. automatische Später→To-Do-
   // Beförderung beim Setzen eines Datums) müssen mit in den Sync, auch wenn sie nicht im Patch standen.
-  const sentPatch = task.bucket !== before.bucket && !('bucket' in patch) ? { ...patch, bucket: task.bucket } : patch;
+  const sentPatch = { ...patch };
+  for (const k of ['bucket', 'color', 'due_time', 'due_end_time']) {
+    if (!(k in patch) && (task[k] ?? null) !== (before[k] ?? null)) sentPatch[k] = task[k] ?? null;
+  }
   await store.enqueue('update', id, sentPatch, before.updated_at);
   return task;
 }
@@ -198,6 +201,24 @@ test('Eine eigene Dauer wird gesendet und beim zweiten Gerät korrekt zurückgel
   await S.syncWith(store, remote);
   const ev2 = remote.active()[0];
   assert.ok(ev2.end.dateTime.startsWith('2031-04-01T15:00')); // 14:00 + 1 Std. Vorgabe
+});
+
+test('Kategorie ändern (z. B. per Mehrfachbearbeitung): die daraus abgeleitete Farbe kommt auch bei Google an', async () => {
+  const store = fakeStore();
+  const cats = { Elektrik: '5', Garten: '10' };
+  const t = await createLocal(store, { title: 'Wird umkategorisiert', due_date: '2031-04-01', category: 'Elektrik' }, cats);
+  await S.syncWith(store, remote);
+  assert.strictEqual(remote.active()[0].colorId, '5');
+
+  await updateLocal(store, t.id, { category: 'Garten' }, cats); // Farbe wird lokal abgeleitet, steht nicht im Patch
+  await S.syncWith(store, remote);
+  const ev = remote.active()[0];
+  assert.strictEqual(ev.extendedProperties.private.category, 'Garten');
+  assert.strictEqual(ev.colorId, '10');
+  // ...und beim zweiten Gerät landet dieselbe Farbe, nicht die alte.
+  const deviceB = fakeStore();
+  await S.syncWith(deviceB, remote);
+  assert.strictEqual((await deviceB.getRawTasks())[0].color, '10');
 });
 
 test('Task ohne Datum synct trotzdem (versteckter Platzhalter-Termin), Datum setzen/entfernen wirkt in Google', async () => {

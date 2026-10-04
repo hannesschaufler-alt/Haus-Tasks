@@ -101,6 +101,17 @@
     border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow); transition: box-shadow .15s, border-color .15s; }
   .task:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
   .task.done { opacity: .72; }
+  /* Auswahlmodus: die ganze Zeile ist nur noch Auswahlfläche, nichts darin reagiert einzeln. */
+  .task.selectable { cursor: pointer; }
+  .task.selectable * { pointer-events: none; }
+  .task.selectable.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+  .select-dot { display: grid; place-content: center; width: 22px; height: 22px; min-width: 22px; border-radius: 50%;
+    border: 2px solid var(--line); font-size: 13px; font-weight: 700; color: var(--accent-text); justify-self: center; align-self: center; }
+  .task.selected .select-dot { background: var(--accent); border-color: var(--accent); }
+  .select-bar { position: sticky; bottom: 12px; z-index: 6; display: flex; align-items: center; gap: 8px; margin-top: 12px;
+    padding: 10px 12px; background: var(--card); border: 1px solid var(--accent); border-radius: var(--radius); box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+  .select-bar .count { flex: 1; font-weight: 600; font-size: 14px; }
+  .inline-check { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--muted); }
   .task.done .title { text-decoration: line-through; color: var(--muted); }
   /* Runde Checkbox statt eckigem Häkchen. width/height allein reichten nicht in jedem Browser (Grid-
      Kinder werden sonst auf die Spaltenbreite gestreckt); aspect-ratio plus min/max-Werte erzwingen das
@@ -202,6 +213,7 @@
     .icon-btn { padding: 10px; }
     .task { grid-template-columns: auto auto 1fr auto; gap: 10px; padding: 10px; }
     .task input[type=checkbox] { width: 26px; height: 26px; min-width: 26px; min-height: 26px; max-width: 26px; max-height: 26px; }
+    .select-dot { width: 26px; height: 26px; min-width: 26px; }
     .date { width: 50px; }
     .date .day { font-size: 21px; }
     .toolbar select { flex: 1; min-width: 0; }
@@ -250,7 +262,7 @@ const ASSIGNEE_INITIAL = { Caro: 'C', Hannes: 'H' };
 const ASSIGNEE_COLOR = { Caro: '#e05297', Hannes: '#2f6fed' }; // nur fürs Avatar-Kürzel, unabhängig von Kategoriefarben
 const state = {
   tasks: [], cfg: null, status: null, cats: new Set(), locs: new Set(), assignees: new Set(), showDone: false, sort: 'due', expanded: new Set(),
-  lastSyncAt: null, lastSyncError: null, online: true, focusQuickCapture: false, syncHistory: [],
+  lastSyncAt: null, lastSyncError: null, online: true, focusQuickCapture: false, syncHistory: [], selecting: false, selected: new Set(),
   todoOpen: true, laterOpen: false, // "Später" bewusst standardmäßig eingeklappt, weniger prominent als "Anstehend"
 };
 
@@ -355,6 +367,20 @@ function sorted(list, sortFn = SORTS[state.sort].fn) {
 // Löschen gibt's nur noch in der Detailansicht (siehe openForm) – hier an derselben Stelle stattdessen
 // die Zuständigkeit, damit auf einen Blick sichtbar bleibt, wer den Task übernommen hat.
 function taskRow(t) {
+  // Auswahlmodus (Mehrfachbearbeitung): die ganze Zeile schaltet nur noch die Auswahl um, statt Abhaken,
+  // Datum-Schnellwahl oder Detailansicht auszulösen. Kategorie/Ort werden mit angezeigt, damit man sieht,
+  // was man gerade massenhaft ändert.
+  if (state.selecting) {
+    const sel = state.selected.has(t.id);
+    return h('div', { class: 'task selectable' + (sel ? ' selected' : '') + (t.done ? ' done' : ''), onclick: () => toggleSelect(t.id) },
+      h('span', { class: 'select-dot' }, sel ? '✓' : ''),
+      dateTile(t),
+      h('div', { class: 'main' },
+        h('div', { class: 'title' }, t.title),
+        (t.category || t.location) && h('div', { class: 'meta' },
+          t.category && h('span', { class: 'badge' }, t.category), t.location && h('span', { class: 'badge' }, t.location))),
+      avatar(t.assignee));
+  }
   return h('div', { class: 'task' + (t.done ? ' done' : '') },
     h('input', { type: 'checkbox', checked: t.done, title: t.done ? 'Wieder öffnen' : 'Abhaken', onchange: (e) => toggleDone(t, e.target.checked) }),
     dateTile(t),
@@ -409,6 +435,96 @@ function toggleItem(t, index, done) {
   const next = (toggleQueue.get(t.id) || Promise.resolve()).then(run);
   toggleQueue.set(t.id, next.catch(() => {}));
   return next;
+}
+
+// --- Mehrfachauswahl & Mehrfachbearbeitung ---
+function toggleSelect(id) {
+  state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
+  render();
+}
+function exitSelectMode() {
+  state.selecting = false;
+  state.selected.clear();
+  render();
+}
+
+// Wendet dieselbe Änderung nacheinander auf alle ausgewählten Tasks an. Einzelne Fehlschläge (z. B. Datum
+// entfernen bei einer Serie, die ein Datum braucht) stoppen den Rest nicht, sondern werden am Ende gemeldet.
+async function applyBulk(ids, patch) {
+  let ok = 0;
+  const errors = [];
+  for (const id of ids) {
+    const t = state.tasks.find((x) => x.id === id);
+    try {
+      await Offline.mutate('task', 'update', { id, patch });
+      ok++;
+    } catch (e) { errors.push(`${t?.title || id}: ${e.message}`); }
+  }
+  return { ok, errors };
+}
+
+const KEEP = '__keep';
+function openBulkForm() {
+  const ids = [...state.selected];
+  const cfg = state.cfg;
+  const keepOpt = (label) => h('option', { value: KEEP }, label);
+  const date = h('input', { type: 'date' });
+  const clearDate = h('input', { type: 'checkbox' });
+  clearDate.addEventListener('change', () => { date.disabled = clearDate.checked; if (clearDate.checked) date.value = ''; });
+  const cat = h('select', {}, keepOpt('– unverändert –'), h('option', { value: '' }, '– keine –'), Object.keys(cfg.categories).map((c) => h('option', { value: c }, c)));
+  const loc = h('select', {}, keepOpt('– unverändert –'), h('option', { value: '' }, '– keiner –'), cfg.locations.map((l) => h('option', { value: l }, l)));
+  const who = h('select', {}, keepOpt('– unverändert –'), h('option', { value: '' }, 'Niemand'), ASSIGNEES.map((a) => h('option', { value: a }, a)));
+  const prio = h('select', {}, keepOpt('– unverändert –'), cfg.priorities.map((p) => h('option', { value: p }, p)));
+  const bucket = h('select', {}, keepOpt('– unverändert –'), h('option', { value: 'todo' }, 'To Do'), h('option', { value: 'later' }, 'Später'));
+  const err = h('div', { class: 'error' });
+  const form = $('#form');
+  const field = (label, ...ctl) => h('div', { class: 'field' }, h('label', {}, label), ...ctl);
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    // Nur ausgefüllte Felder gehen in den Patch – alles andere bleibt bei jedem Task, wie es ist.
+    const patch = {};
+    if (clearDate.checked) patch.due_date = null;
+    else if (date.value) patch.due_date = date.value;
+    if (cat.value !== KEEP) patch.category = cat.value || null;
+    if (loc.value !== KEEP) patch.location = loc.value || null;
+    if (who.value !== KEEP) patch.assignee = who.value || null;
+    if (prio.value !== KEEP) patch.priority = prio.value;
+    if (bucket.value !== KEEP) patch.bucket = bucket.value;
+    if (!Object.keys(patch).length) { err.textContent = 'Nichts zum Ändern ausgewählt.'; return; }
+    const { ok, errors } = await applyBulk(ids, patch);
+    $('#dlg').close();
+    exitSelectMode();
+    await reload();
+    kickSync();
+    toast(errors.length ? `⚠ ${ok} von ${ids.length} geändert. Nicht geändert: ${errors.join('; ')}` : `${ok} Task${ok === 1 ? '' : 's'} geändert.`);
+  };
+
+  form.replaceChildren(
+    h('h3', {}, `${ids.length} Task${ids.length === 1 ? '' : 's'} bearbeiten`),
+    h('div', { class: 'hint' }, 'Nur was du hier änderst, wird bei allen ausgewählten Tasks gesetzt – alles andere bleibt unverändert.'),
+    field('Datum', date, h('label', { class: 'inline-check' }, clearDate, ' Datum entfernen')),
+    h('div', { class: 'row2' }, field('Kategorie', cat), field('Ort', loc)),
+    h('div', { class: 'row2' }, field('Zuständigkeit', who), field('Priorität', prio)),
+    field('Liste', bucket),
+    err,
+    h('div', { class: 'actions' },
+      h('span'),
+      h('div', { class: 'right' },
+        h('button', { type: 'button', class: 'btn', onclick: () => $('#dlg').close() }, 'Abbrechen'),
+        h('button', { type: 'submit', class: 'btn primary' }, 'Übernehmen'))));
+  $('#dlg').showModal();
+}
+
+// Leiste am unteren Rand im Auswahlmodus: Anzahl, alle (sichtbaren) auswählen, Bearbeiten, Abbrechen.
+function selectBar(visibleIds) {
+  const n = state.selected.size;
+  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => state.selected.has(id));
+  return h('div', { class: 'select-bar' },
+    h('span', { class: 'count' }, n ? `${n} ausgewählt` : 'Tasks antippen zum Auswählen'),
+    h('button', { class: 'btn small', onclick: () => { allSelected ? visibleIds.forEach((id) => state.selected.delete(id)) : visibleIds.forEach((id) => state.selected.add(id)); render(); } }, allSelected ? 'Keine' : 'Alle'),
+    h('button', { class: 'btn small primary', disabled: !n, onclick: openBulkForm }, 'Bearbeiten …'),
+    h('button', { class: 'btn small', onclick: exitSelectMode }, 'Abbrechen'));
 }
 
 async function toggleDone(t, done) {
@@ -552,6 +668,8 @@ function homePage() {
       sectionHeader('Anstehend', openCount, state.todoOpen, () => { state.todoOpen = !state.todoOpen; render(); }),
       state.todoOpen && h('div', {},
         h('div', { class: 'toolbar' },
+          h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) },
+            state.selecting ? 'Auswahl beenden' : '☑ Auswählen'),
           h('span', { style: 'flex:1' }),
           h('label', {}, 'Sortierung '),
           h('select', { onchange: (e) => { state.sort = e.target.value; render(); } },
@@ -564,7 +682,8 @@ function homePage() {
         taskList(filtered, state.tasks.length ? 'Keine Tasks für diese Filter.' : 'Noch keine Tasks. Leg den ersten an!'))),
     h('div', { class: 'section' },
       sectionHeader('Später', laterCount, state.laterOpen, () => { state.laterOpen = !state.laterOpen; render(); }),
-      state.laterOpen && taskList(laterList, 'Nichts auf Später verschoben.', byCreatedAsc)));
+      state.laterOpen && taskList(laterList, 'Nichts auf Später verschoben.', byCreatedAsc)),
+    state.selecting && selectBar(state.todoOpen ? sorted(filtered).map((t) => t.id) : []));
 }
 
 // Kategorien und Orte: gleiche Seite, beide mit Anlegen, Umbenennen und Löschen.
@@ -633,6 +752,8 @@ function render() {
   const route = location.hash.replace(/^#\/?/, '');
   const view = $('#view');
   if (!state.cfg) return;
+  // Der Auswahlmodus gehört nur zur Startseite – beim Wechsel auf eine andere Seite sauber beenden.
+  if (route && state.selecting) { state.selecting = false; state.selected.clear(); }
   if (route === 'debug') {
     renderDebugPage(view);
   } else {

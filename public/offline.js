@@ -143,7 +143,12 @@
         // updateTask() kann Felder selbst mitändern (z. B. die automatische Später→To-Do-Beförderung bei
         // einem neu gesetzten Datum, siehe offline-logic.js) – die müssen mit in den Sync, auch wenn sie
         // nicht im ursprünglichen Patch standen, sonst weicht der lokale Stand vom Google-Stand ab.
-        const patch = task.bucket !== before?.bucket && !('bucket' in args.patch) ? { ...args.patch, bucket: task.bucket } : args.patch;
+        // Gilt ebenso für die aus einem Kategoriewechsel abgeleitete Farbe und das Mitlöschen von Uhrzeit/Endzeit
+        // beim Entfernen des Datums – sonst bliebe bei Google die alte Farbe bzw. Uhrzeit stehen.
+        const patch = { ...args.patch };
+        for (const k of ['bucket', 'color', 'due_time', 'due_end_time']) {
+          if (!(k in args.patch) && (task[k] ?? null) !== (before?.[k] ?? null)) patch[k] = task[k] ?? null;
+        }
         await enqueue({ kind, op, taskId: args.id, patch, baseUpdatedAt: before?.updated_at });
         return task;
       }
