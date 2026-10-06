@@ -53,7 +53,30 @@
   const httpStatus = (e) => e.status ?? e.response?.status ?? (Number.isInteger(Number(e.code)) ? Number(e.code) : undefined);
   const isGone = (e) => [404, 410].includes(httpStatus(e));
 
-  function eventBody(t) {
+  // Gemeinsame Einstellungen (liegen zusammen mit Kategorien/Orten im versteckten Konfigurations-Event, gelten
+  // also für alle Geräte). Fehlt ein Wert, gilt die Vorgabe hier.
+  //   untimedAtEndOfDay: Tasks mit Datum, aber ohne Uhrzeit, werden im Google-Kalender nicht als Ganztags-
+  //   termin, sondern als 1-Minuten-Termin am Tagesende (23:58–23:59) angelegt. Ganztagstermine stehen in
+  //   Googles Monats-/Wochen-/Tagesansicht über allen Terminen mit Uhrzeit und schieben normale Termine
+  //   nach unten, sobald viele Tasks an einem Tag liegen; am Tagesende sortiert, stören sie nicht mehr.
+  const DEFAULT_SETTINGS = { untimedAtEndOfDay: true };
+  const SLOT_START = '23:58';
+  const SLOT_END = '23:59';
+  // Wie viele Tasks pro Sync auf die neue Darstellung umgestellt werden (2 Google-Aufrufe je Task). Der Rest
+  // folgt automatisch beim nächsten Sync, so blockiert die einmalige Umstellung vieler Alt-Tasks nicht lange.
+  const SLOT_RECONCILE_LIMIT = 40;
+
+  function resolveSettings(raw) {
+    return { ...DEFAULT_SETTINGS, ...(raw && typeof raw === 'object' ? raw : {}) };
+  }
+
+  // Bekommt der Task im Kalender den 23:58-Platzhalter-Termin? Nur bei echtem Datum und ohne eigene Uhrzeit
+  // (Platzhalter-Termine für datumslose Tasks bleiben ganztägig und unsichtbar auf 1970).
+  function usesTimeSlot(t, opts) {
+    return !!(opts && opts.untimedAtEndOfDay && t.due_date && !t.due_time);
+  }
+
+  function eventBody(t, opts = {}) {
     // Titel, Datum und Farbe bleiben für jeden normalen Kalender lesbar; alles Weitere (Kategorie, Ort,
     // Priorität, Notizen, Checkliste, Serie) steckt versteckt in extendedProperties.private – dadurch
     // sieht Google Kalender selbst nur einen normalen Termin, aber jede Haus-Tasks-Installation kann die
@@ -65,16 +88,23 @@
     // einer vorherigen Version des Termins stehen und lehnt die dann widersprüchliche Kombination ab
     // ("Invalid start time"). Ohne eigene Endzeit gilt eine Stunde Dauer als Vorgabe.
     const hasTime = !!(t.due_date && t.due_time);
+    const slot = usesTimeSlot(t, opts);
+    const tz = opts.timeZone || TIME_ZONE;
     let start, end;
     if (hasTime) {
       const endAt = t.due_end_time ? { date: t.due_date, time: t.due_end_time } : Recurrence.addMinutes(t.due_date, t.due_time, 60);
       start = { date: null, dateTime: `${t.due_date}T${t.due_time}:00`, timeZone: TIME_ZONE };
       end = { date: null, dateTime: `${endAt.date}T${endAt.time}:00`, timeZone: TIME_ZONE };
+    } else if (slot) {
+      // Zeitzone des Kalenders (nicht des Geräts): sonst rutscht der Task von einem Gerät in einer anderen
+      // Zeitzone auf den Folgetag, weil 23:58 dort woanders liegt.
+      start = { date: null, dateTime: `${t.due_date}T${SLOT_START}:00`, timeZone: tz };
+      end = { date: null, dateTime: `${t.due_date}T${SLOT_END}:00`, timeZone: tz };
     } else {
       start = { date: due, dateTime: null, timeZone: null };
       end = { date: Recurrence.addDays(due, 1), dateTime: null, timeZone: null }; // Ende ganztägiger Events ist exklusiv
     }
-    return {
+    const body = {
       summary: (t.done ? DONE_PREFIX : '') + t.title + (initial ? ` (${initial})` : ''),
       start, end,
       colorId: t.done ? DONE_COLOR : t.color,
@@ -92,10 +122,17 @@
           series_id: t.series_id || '',
           color: t.color || '', // die „echte“ Farbe, damit sie nach einem Erledigt/Grau-Zyklus wiederhergestellt werden kann
           noDate: t.due_date ? '' : 'true', // Platzhalterdatum, kein echtes Fälligkeitsdatum
+          noTime: slot ? 'true' : '', // 23:58-Platzhalter statt echter Uhrzeit (siehe usesTimeSlot)
           bucket: t.bucket || '', // GTD-Status (inbox/todo/later), siehe offline-logic.js
         },
       },
     };
+    // Ein Termin mit Uhrzeit bekäme sonst die Standard-Benachrichtigung des Kalenders (also um ~23:30 für jeden
+    // Task) – für den Platzhalter ausdrücklich abschalten. Beim Zurückstellen auf ganztägig wieder auf die
+    // Standardeinstellung des Kalenders setzen; sonst (kein Wechsel) bleibt `reminders` unangetastet.
+    if (slot) body.reminders = { useDefault: false, overrides: [] };
+    else if (t.time_slot) body.reminders = { useDefault: true };
+    return body;
   }
 
   // Baut aus einem rohen Google-Event wieder ein vollständiges, task-förmiges Objekt zusammen (Titel,
@@ -124,12 +161,15 @@
     // Rückfall würde ein Merge das Datum sonst auf den Platzhalter zurücksetzen, nicht nur den Patch ablehnen.
     const startDate = ev.start?.date || (ev.start?.dateTime ? ev.start.dateTime.slice(0, 10) : null);
     const due_date = p.noDate === 'true' ? null : (startDate || null);
-    const due_time = due_date && ev.start?.dateTime ? ev.start.dateTime.slice(11, 16) : null;
+    // 23:58-Platzhalter (siehe usesTimeSlot) zählt als „keine Uhrzeit“. Der Marker allein reicht nicht – ohne
+    // dateTime (z. B. wieder auf ganztägig gestellt) ist der Termin kein Platzhalter mehr.
+    const time_slot = p.noTime === 'true' && !!ev.start?.dateTime;
+    const due_time = due_date && ev.start?.dateTime && !time_slot ? ev.start.dateTime.slice(11, 16) : null;
     // Nur übernehmen, wenn die Endzeit auf denselben Tag fällt – ein über Mitternacht gehender Termin
     // wird (wie beim Anlegen, siehe eventBody()) nicht unterstützt, dann lieber die Vorgabe (eine Stunde).
     const due_end_time = due_time && ev.end?.dateTime && ev.end.dateTime.slice(0, 10) === due_date ? ev.end.dateTime.slice(11, 16) : null;
     return {
-      title, due_date, due_time, due_end_time, done, color,
+      title, due_date, due_time, due_end_time, time_slot, done, color,
       category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
       notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
       bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo',
@@ -249,7 +289,7 @@
   // offline-logic.js), ist – anders als bei einer zentralen Datenbank mit Auto-Increment – keine
   // ID-Umschreibung nötig: ein Task, der eben erst sein erstes google_event_id bekommen hat, wird beim
   // nächsten Eintrag in derselben Warteschlange einfach erneut aus dem Speicher gelesen.
-  async function push(store, remote) {
+  async function push(store, remote, opts = {}) {
     const entries = await store.getOutbox();
     const sent = [];
     const failed = [];
@@ -280,8 +320,8 @@
         // Kein Event vorhanden (erste Anlage): einfach mit dem vollen lokalen Stand anlegen, es gibt
         // noch nichts, womit man ihn zusammenführen müsste.
         if (!task.google_event_id) {
-          const ev = await remote.insert(eventBody(task));
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated } : t));
+          const ev = await remote.insert(eventBody(task, opts));
+          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, time_slot: usesTimeSlot(task, opts) } : t));
           await store.saveRawTasks(tasks);
           sent.push(entry);
           await store.removeOutboxEntry(entry.seq);
@@ -302,8 +342,8 @@
         }
 
         if (!freshEvent) {
-          const ev = await remote.insert(eventBody(task)); // neu anlegen, mit dem vollen lokalen Stand
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated } : t));
+          const ev = await remote.insert(eventBody(task, opts)); // neu anlegen, mit dem vollen lokalen Stand
+          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, time_slot: usesTimeSlot(task, opts) } : t));
           await store.saveRawTasks(tasks);
           sent.push(entry);
           await store.removeOutboxEntry(entry.seq);
@@ -314,8 +354,8 @@
         if (clash) clashes.push(clash);
 
         const merged = { ...taskShapeFromEvent(freshEvent), ...entry.patch };
-        const ev = await remote.patch(task.google_event_id, eventBody(merged));
-        tasks = tasks.map((t) => (t.id === task.id ? { ...t, ...merged, google_event_id: ev.id, google_updated: ev.updated } : t));
+        const ev = await remote.patch(task.google_event_id, eventBody(merged, opts));
+        tasks = tasks.map((t) => (t.id === task.id ? { ...t, ...merged, google_event_id: ev.id, google_updated: ev.updated, time_slot: usesTimeSlot(merged, opts) } : t));
         await store.saveRawTasks(tasks);
         sent.push(entry);
         await store.removeOutboxEntry(entry.seq);
@@ -350,18 +390,61 @@
     if (localNewer) {
       await remote.writeConfig(remoteCfg.id, local);
     } else {
-      await store.saveConfig({ categories: remoteCfg.categories, locations: remoteCfg.locations, updated_at: remoteCfg.updated });
+      await store.saveConfig({ categories: remoteCfg.categories, locations: remoteCfg.locations, settings: remoteCfg.settings || {}, updated_at: remoteCfg.updated });
     }
   }
 
+  // Stellt Tasks ohne Uhrzeit auf die gerade gewählte Darstellung um (23:58-Platzhalter oder ganztägig),
+  // falls ihr Google-Event noch die andere hat – nötig für alle bestehenden Tasks, nachdem die Einstellung
+  // zum ersten Mal greift oder umgeschaltet wurde, und für Tasks, die auf einem anderen Gerät neu dazukamen.
+  // Läuft nach pull() und push(), also nie über eine noch nicht gesendete lokale Änderung drüber (deren
+  // Tasks sind ausgenommen). Holt wie push() vor dem Patch den aktuellen Google-Stand, damit gleichzeitige
+  // Änderungen an anderen Feldern erhalten bleiben. Fehler brechen den Sync nicht ab; was nicht klappt,
+  // wird beim nächsten Sync erneut versucht.
+  async function reconcileTimeSlots(store, remote, opts, dirtyIds) {
+    let tasks = await store.getRawTasks();
+    const candidates = tasks.filter((t) => t.google_event_id && !t.deleted && t.due_date && !t.due_time && !dirtyIds.has(t.id)
+      && !!t.time_slot !== !!opts.untimedAtEndOfDay && t.slot_failed !== !!opts.untimedAtEndOfDay);
+    let updated = 0;
+    for (const task of candidates.slice(0, SLOT_RECONCILE_LIMIT)) {
+      try {
+        const fresh = await remote.get(task.google_event_id);
+        const merged = taskShapeFromEvent(fresh);
+        if (merged.due_time || !merged.due_date) continue; // inzwischen ein Termin mit echter Uhrzeit bzw. ohne Datum: nichts umzustellen
+        const ev = await remote.patch(task.google_event_id, eventBody(merged, opts));
+        tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_updated: ev.updated, time_slot: usesTimeSlot(merged, opts), slot_failed: undefined } : t));
+        await store.saveRawTasks(tasks);
+        updated++;
+      } catch (e) {
+        const status = httpStatus(e);
+        if (isGone(e)) continue; // Event weg: der nächste Abgleich räumt das lokal auf
+        if (status >= 400 && status < 500) {
+          // Dauerhaft abgelehnt: für diese Einstellung nicht ständig neu versuchen (siehe slot_failed-Prüfung oben).
+          tasks = tasks.map((t) => (t.id === task.id ? { ...t, slot_failed: !!opts.untimedAtEndOfDay } : t));
+          await store.saveRawTasks(tasks);
+          continue;
+        }
+        break; // Netzwerkproblem o. Ä.: Rest beim nächsten Sync
+      }
+    }
+    return updated;
+  }
+
   async function syncWith(store, remote) {
+    const timeZone = (await remote.getTimeZone?.().catch(() => null)) || TIME_ZONE;
+    const optsFor = async () => ({ ...resolveSettings((await store.getConfig())?.settings), timeZone });
+    const optsBefore = await optsFor(); // lokaler Stand der Einstellungen, für Änderungen, die gerade gesendet werden
     const outboxBefore = await store.getOutbox();
     const dirtyIds = new Set(outboxBefore.map((e) => e.taskId));
     const pulled = await pull(store, remote, dirtyIds);
-    const { sent, failed, clashes, aborted, abortReason } = await push(store, remote);
+    const { sent, failed, clashes, aborted, abortReason } = await push(store, remote, optsBefore);
     await syncConfig(store, remote).catch(() => {}); // Konfiguration ist nice-to-have, darf den Task-Sync nicht blockieren
-    return { pulled, pushed: sent.length, failed, clashes, aborted, abortReason };
+    // Danach erst die Umstellung auf die (ggf. gerade von einem anderen Gerät geänderte) Einstellung: so gilt
+    // eine umgeschaltete Einstellung noch im selben Durchlauf, ohne dass die Reihenfolge Pull/Push/Konfiguration
+    // sich ändert. Was push() mit dem älteren Stand gesendet hat, gleicht die Umstellung bei Bedarf gleich aus.
+    const slotsUpdated = aborted ? 0 : await reconcileTimeSlots(store, remote, await optsFor(), new Set((await store.getOutbox()).map((e) => e.taskId))).catch(() => 0);
+    return { pulled, pushed: sent.length, failed, clashes, aborted, abortReason, slotsUpdated };
   }
 
-  return { syncWith, pull, push, syncConfig, eventBody, taskShapeFromEvent, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
+  return { syncWith, pull, push, syncConfig, reconcileTimeSlots, eventBody, taskShapeFromEvent, usesTimeSlot, resolveSettings, DEFAULT_SETTINGS, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
 });

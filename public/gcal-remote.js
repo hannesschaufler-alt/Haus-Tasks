@@ -32,7 +32,19 @@
       return data;
     }
 
+    // Zeitzone des Kalenders (nicht des Geräts) - gebraucht für den 23:58-Platzhalter-Termin, siehe sync-core.js.
+    // Einmal pro Kalender nachfragen, ein Fehler (z. B. offline) ist kein Problem: dann gilt die Zeitzone des Geräts.
+    let timeZone = null;
+    let timeZoneFor = null;
+
     return {
+      async getTimeZone() {
+        const calendarId = await getCalendarId();
+        if (timeZone && timeZoneFor === calendarId) return timeZone;
+        const cal = await call('');
+        if (cal?.timeZone) { timeZone = cal.timeZone; timeZoneFor = calendarId; }
+        return timeZone;
+      },
       async listChanges(syncToken) {
         const events = [];
         let pageToken;
@@ -60,9 +72,9 @@
         if (!ev) return null;
         const p = ev.extendedProperties?.private || {};
         try {
-          return { id: ev.id, updated: ev.updated, categories: JSON.parse(p.categories || '{}'), locations: JSON.parse(p.locations || '[]') };
+          return { id: ev.id, updated: ev.updated, categories: JSON.parse(p.categories || '{}'), locations: JSON.parse(p.locations || '[]'), settings: JSON.parse(p.settings || '{}') };
         } catch {
-          return { id: ev.id, updated: ev.updated, categories: {}, locations: [] };
+          return { id: ev.id, updated: ev.updated, categories: {}, locations: [], settings: {} };
         }
       },
       async writeConfig(id, cfg) {
@@ -70,7 +82,7 @@
           summary: '⚙️ Haus-Tasks Einstellungen (bitte nicht löschen oder bearbeiten)',
           start: { date: '1970-01-01' }, end: { date: '1970-01-02' },
           visibility: 'private', transparency: 'transparent',
-          extendedProperties: { private: { appMarker: CONFIG_MARKER, categories: JSON.stringify(cfg.categories), locations: JSON.stringify(cfg.locations) } },
+          extendedProperties: { private: { appMarker: CONFIG_MARKER, categories: JSON.stringify(cfg.categories), locations: JSON.stringify(cfg.locations), settings: JSON.stringify(cfg.settings || {}) } },
         };
         const ev = id ? await call(`/events/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) })
           : await call('/events', { method: 'POST', body: JSON.stringify(body) });

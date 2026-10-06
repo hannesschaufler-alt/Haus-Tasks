@@ -77,7 +77,28 @@ test('readConfig: liest Kategorien/Orte aus dem versteckten Termin', async () =>
     body: { items: [{ id: 'cfg1', updated: 't1', extendedProperties: { private: { categories: '{"Garten":"10"}', locations: '["Keller"]' } } }] },
   }]);
   const cfg = await remote(calls).readConfig();
-  assert.deepStrictEqual(cfg, { id: 'cfg1', updated: 't1', categories: { Garten: '10' }, locations: ['Keller'] });
+  // Ältere Konfigurations-Termine kennen noch keine Einstellungen: dann eine leere Liste (es gelten die Vorgaben).
+  assert.deepStrictEqual(cfg, { id: 'cfg1', updated: 't1', categories: { Garten: '10' }, locations: ['Keller'], settings: {} });
+});
+
+test('readConfig/writeConfig: gemeinsame Einstellungen werden mitgelesen und mitgeschrieben', async () => {
+  const calls = fakeFetch([
+    { body: { items: [{ id: 'cfg1', updated: 't1', extendedProperties: { private: { categories: '{}', locations: '[]', settings: '{"untimedAtEndOfDay":false}' } } }] } },
+    { body: { id: 'cfg1', updated: 't2' } },
+  ]);
+  const r = remote(calls);
+  assert.deepStrictEqual((await r.readConfig()).settings, { untimedAtEndOfDay: false });
+  await r.writeConfig('cfg1', { categories: {}, locations: [], settings: { untimedAtEndOfDay: true } });
+  assert.deepStrictEqual(JSON.parse(JSON.parse(calls[1].opts.body).extendedProperties.private.settings), { untimedAtEndOfDay: true });
+});
+
+test('getTimeZone: fragt die Zeitzone des Kalenders einmal ab und merkt sie sich', async () => {
+  const calls = fakeFetch([{ body: { id: 'haus', timeZone: 'Europe/Vienna' } }]);
+  const r = remote(calls);
+  assert.strictEqual(await r.getTimeZone(), 'Europe/Vienna');
+  assert.strictEqual(await r.getTimeZone(), 'Europe/Vienna');
+  assert.strictEqual(calls.length, 1, 'zweiter Aufruf kommt aus dem Merker');
+  assert.match(calls[0].url, /\/calendars\/haus%40group\.calendar\.google\.com$/);
 });
 
 test('writeConfig: legt neu an ohne ID, aktualisiert mit ID', async () => {

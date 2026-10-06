@@ -122,6 +122,16 @@
   }
   async function configOrEmpty() { return (await getConfig()) || { categories: {}, locations: [] }; }
 
+  // Gemeinsame Einstellungen (gelten für alle Geräte, siehe SyncCore.DEFAULT_SETTINGS): liegen in derselben
+  // Konfiguration wie Kategorien/Orte und wandern über dasselbe versteckte Google-Event mit.
+  async function getSettings() { return root.SyncCore.resolveSettings((await getConfig())?.settings); }
+  async function setSettings(patch) {
+    const cfg = await configOrEmpty();
+    const settings = { ...(cfg.settings || {}), ...patch };
+    await saveConfig({ ...cfg, settings, updated_at: new Date().toISOString() });
+    return root.SyncCore.resolveSettings(settings);
+  }
+
   function pendingCount() { return getOutbox().then((l) => l.length); }
 
   // --- Änderungen anwenden: sofort lokal (über offline-logic.js), dazu ggf. ein Warteschlangen-Eintrag ---
@@ -242,6 +252,8 @@
     getCachedTasks,
     getConfig,
     saveConfig,
+    getSettings,
+    setSettings,
     pendingCount,
     mutate,
     ping,

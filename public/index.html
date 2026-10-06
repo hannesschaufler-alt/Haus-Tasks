@@ -232,6 +232,7 @@
     <a class="brand" href="#/">🏠 Haus-Tasks<span class="inbox-badge" id="inboxBadge" hidden title="Unsortierte Einträge in der Inbox"></span></a>
     <div class="sync">
       <a class="icon-btn invite" href="haushalt.html" title="Haushalt einladen">👪</a>
+      <button class="icon-btn" id="settingsBtn" title="Einstellungen">⚙</button>
       <span class="dot" id="syncDot"></span><span id="syncText">…</span><button class="btn small" id="syncBtn">Sync</button>
       <a class="icon-btn" href="#/debug" title="Debug: Rohdaten &amp; Sync-Warteschlange">🛠</a>
       <button class="icon-btn" id="signOutBtn" title="Bei Google abmelden">⎋</button>
@@ -1172,6 +1173,36 @@ async function syncNow(silent) {
   render();
 }
 
+// Gemeinsame Einstellungen (gelten für alle Geräte und werden über Google synchronisiert, siehe sync-core.js).
+async function openSettings() {
+  const s = await Offline.getSettings();
+  const slot = h('input', { type: 'checkbox', checked: s.untimedAtEndOfDay, id: 'optSlot' });
+  const form = $('#form');
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const changed = slot.checked !== s.untimedAtEndOfDay;
+    await Offline.setSettings({ untimedAtEndOfDay: slot.checked });
+    $('#dlg').close();
+    if (changed) {
+      toast('Gespeichert – bestehende Tasks werden jetzt im Google-Kalender umgestellt …');
+      syncNow(true); // gleich anstoßen: eine Einstellungsänderung steht nicht in der Warteschlange, kickSync() täte nichts
+    }
+  };
+  form.replaceChildren(
+    h('h3', {}, 'Einstellungen'),
+    h('div', { class: 'field' },
+      h('label', { for: 'optSlot', style: 'display:flex;gap:10px;align-items:flex-start;color:var(--text)' }, slot,
+        h('span', {}, 'Tasks ohne Uhrzeit am Tagesende im Google-Kalender einsortieren (23:58)')),
+      h('div', { class: 'hint' }, 'Tasks mit Datum, aber ohne Uhrzeit, erscheinen im Google-Kalender sonst als Ganztagstermin ganz oben und schieben deine normalen Termine nach unten. Mit dieser Option liegen sie als 1-Minuten-Termin ganz am Ende des Tages (ohne Erinnerung); in der App bleibt es ein Task ohne Uhrzeit. Gilt für alle Geräte und stellt bestehende Tasks einmalig um.')),
+    h('div', { class: 'actions' },
+      h('span'),
+      h('div', { class: 'right' },
+        h('button', { type: 'button', class: 'btn', onclick: () => $('#dlg').close() }, 'Abbrechen'),
+        h('button', { type: 'submit', class: 'btn primary' }, 'Speichern'))));
+  $('#dlg').showModal();
+}
+
+$('#settingsBtn').onclick = openSettings;
 $('#syncBtn').onclick = () => syncNow(false);
 $('#signOutBtn').onclick = () => { if (confirm('Bei Google abmelden?')) { Auth.signOut(); renderSignIn(); } };
 window.addEventListener('hashchange', render);
