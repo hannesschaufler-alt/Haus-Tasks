@@ -58,7 +58,7 @@ function fakeRemote() {
 
 // --- Fake-Speicher: ein Gerät (In-Memory statt IndexedDB) ---
 // `settings`: optional vorbelegte gemeinsame Einstellungen (siehe SyncCore.DEFAULT_SETTINGS); ohne Angabe gilt
-// die Vorgabe der App (23:58-Platzhalter für Tasks ohne Uhrzeit AN).
+// die Vorgabe der App (Platz am Tagesende für Tasks ohne Uhrzeit AN).
 function fakeStore(settings) {
   let tasks = [];
   let outbox = [];
@@ -540,7 +540,7 @@ test('Abgelaufenes syncToken (410) löst einen vollständigen Abgleich aus', asy
   assert.strictEqual(findByTitle(await store.getRawTasks(), 'Neu') !== undefined, true);
 });
 
-// --- Tasks ohne Uhrzeit: 23:58-Platzhalter statt Ganztagstermin (Einstellung untimedAtEndOfDay) ---
+// --- Tasks ohne Uhrzeit: Platz am Tagesende statt Ganztagstermin (Einstellung untimedAtEndOfDay) ---
 
 // Wie Offline.setSettings() im Browser: Einstellung ändern und die Konfiguration als „neuer“ markieren.
 async function setSetting(store, patch) {
@@ -548,12 +548,12 @@ async function setSetting(store, patch) {
   await store.saveConfig({ ...cfg, settings: { ...cfg.settings, ...patch }, updated_at: new Date(Date.now() + 60000).toISOString() });
 }
 
-test('Standard: Task mit Datum ohne Uhrzeit wird als 1-Minuten-Termin 23:58–23:59 angelegt, ohne Erinnerung, in der App weiter ohne Uhrzeit', async () => {
+test('Standard: Task mit Datum ohne Uhrzeit wird als 25-Minuten-Termin 23:34–23:59 (Platz 0) angelegt, ohne Erinnerung, in der App weiter ohne Uhrzeit', async () => {
   const store = fakeStore();
   await createLocal(store, { title: 'Müll rausbringen', due_date: '2031-03-10', category: 'Haushalt', color: '5' });
   await S.syncWith(store, remote);
   const [ev] = taskEvents();
-  assert.deepStrictEqual(ev.start, { date: null, dateTime: '2031-03-10T23:58:00', timeZone: 'Europe/Vienna' }); // Zeitzone des Kalenders, nicht des Geräts
+  assert.deepStrictEqual(ev.start, { date: null, dateTime: '2031-03-10T23:34:00', timeZone: 'Europe/Vienna' }); // Zeitzone des Kalenders, nicht des Geräts
   assert.deepStrictEqual(ev.end, { date: null, dateTime: '2031-03-10T23:59:00', timeZone: 'Europe/Vienna' });
   assert.strictEqual(ev.extendedProperties.private.noTime, 'true');
   assert.deepStrictEqual(ev.reminders, { useDefault: false, overrides: [] }, 'sonst gäbe es für jeden Task eine Benachrichtigung um ~23:30');
@@ -563,7 +563,7 @@ test('Standard: Task mit Datum ohne Uhrzeit wird als 1-Minuten-Termin 23:58–23
   assert.strictEqual(task.time_slot, true);
 });
 
-test('Zweites Gerät liest den 23:58-Platzhalter als „keine Uhrzeit“ (Datum bleibt, Uhrzeit nicht)', async () => {
+test('Zweites Gerät liest den Platz am Tagesende als „keine Uhrzeit“ (Datum bleibt, Uhrzeit nicht)', async () => {
   const a = fakeStore();
   const b = fakeStore();
   await createLocal(a, { title: 'Filter wechseln', due_date: '2031-03-10' });
@@ -577,7 +577,7 @@ test('Zweites Gerät liest den 23:58-Platzhalter als „keine Uhrzeit“ (Datum 
   await updateLocal(b, onB.id, { title: 'Filter gewechselt' });
   await S.syncWith(b, remote);
   const [ev] = taskEvents();
-  assert.strictEqual(ev.start.dateTime, '2031-03-10T23:58:00');
+  assert.strictEqual(ev.start.dateTime, '2031-03-10T23:34:00');
   assert.strictEqual(ev.extendedProperties.private.noTime, 'true');
 });
 
@@ -602,7 +602,7 @@ test('Uhrzeit entfernen / wieder setzen: Task fällt auf den Platzhalter zurück
   await updateLocal(store, t.id, { due_time: null });
   await S.syncWith(store, remote);
   let ev = taskEvents()[0];
-  assert.strictEqual(ev.start.dateTime, '2031-03-10T23:58:00');
+  assert.strictEqual(ev.start.dateTime, '2031-03-10T23:34:00');
   assert.strictEqual(ev.extendedProperties.private.noTime, 'true');
   assert.deepStrictEqual(ev.reminders, { useDefault: false, overrides: [] });
 
@@ -619,7 +619,7 @@ test('Einstellung AUS: neue Tasks bleiben Ganztagstermine; bestehende Platzhalte
   const store = fakeStore();
   await createLocal(store, { title: 'Alt', due_date: '2031-03-10' });
   await S.syncWith(store, remote);
-  assert.strictEqual(taskEvents()[0].start.dateTime, '2031-03-10T23:58:00');
+  assert.strictEqual(taskEvents()[0].start.dateTime, '2031-03-10T23:34:00');
 
   await setSetting(store, { untimedAtEndOfDay: false });
   const r = await S.syncWith(store, remote);
@@ -651,9 +651,9 @@ test('Einstellung AN: bestehende Ganztags-Tasks (auch erledigte) werden einmalig
   const r = await S.syncWith(store, remote);
   assert.strictEqual(r.slotsUpdated, 2, 'nur „Offen“ und „Erledigt“ – nicht die echte Uhrzeit, nicht der datumslose');
   const byTitle = (title) => taskEvents().find((e) => e.summary.replace(/^✓ /, '') === title);
-  assert.strictEqual(byTitle('Offen').start.dateTime, '2031-03-10T23:58:00');
+  assert.strictEqual(byTitle('Offen').start.dateTime, '2031-03-10T23:34:00');
   assert.strictEqual(byTitle('Offen').extendedProperties.private.category, 'Haushalt', 'versteckte Zusatzfelder bleiben beim Umstellen erhalten');
-  assert.strictEqual(byTitle('Erledigt').start.dateTime, '2031-03-11T23:58:00');
+  assert.strictEqual(byTitle('Erledigt').start.dateTime, '2031-03-11T23:34:00');
   assert.ok(byTitle('Erledigt').summary.startsWith('✓'), 'erledigt bleibt erledigt');
   assert.strictEqual(byTitle('Echt').start.dateTime, '2031-03-12T08:00:00');
   assert.strictEqual(byTitle('Ohne Datum').start.date, '1970-01-01');
@@ -673,7 +673,7 @@ test('Umstellung holt vor dem Patch den aktuellen Google-Stand (Fremdänderung b
   assert.strictEqual(r.slotsUpdated, 1);
   const ev = taskEvents().find((e) => e.id === eventId);
   assert.strictEqual(ev.summary, 'Direkt in Google umbenannt', 'Fremdänderung darf nicht überschrieben werden');
-  assert.strictEqual(ev.start.dateTime, '2031-03-10T23:58:00');
+  assert.strictEqual(ev.start.dateTime, '2031-03-10T23:34:00');
 });
 
 test('Umstellung läuft nicht über eine noch nicht gesendete lokale Änderung', async () => {
@@ -689,7 +689,7 @@ test('Umstellung läuft nicht über eine noch nicht gesendete lokale Änderung',
   // Der normale Sync sendet erst die Änderung (gleich mit der neuen Darstellung) und hat danach nichts mehr umzustellen.
   const r = await S.syncWith(store, remote);
   assert.strictEqual(taskEvents()[0].summary, 'Lokal umbenannt');
-  assert.strictEqual(taskEvents()[0].start.dateTime, '2031-03-10T23:58:00');
+  assert.strictEqual(taskEvents()[0].start.dateTime, '2031-03-10T23:34:00');
   assert.strictEqual(r.slotsUpdated, 0);
 });
 
@@ -701,7 +701,7 @@ test('Umstellung vieler Tasks läuft in Portionen (je Sync höchstens 40), der R
   assert.strictEqual((await S.syncWith(store, remote)).slotsUpdated, 40);
   assert.strictEqual((await S.syncWith(store, remote)).slotsUpdated, 5);
   assert.strictEqual((await S.syncWith(store, remote)).slotsUpdated, 0);
-  assert.ok(taskEvents().every((e) => e.start.dateTime === '2031-03-10T23:58:00'));
+  assert.ok(taskEvents().every((e) => e.extendedProperties.private.noTime === 'true' && e.start.dateTime.startsWith('2031-03-10T2')));
 });
 
 test('ZWEI GERÄTE: Einstellung wird über das Konfigurations-Event geteilt und gilt noch im selben Sync', async () => {
@@ -730,6 +730,97 @@ test('Kein Zugriff auf die Kalender-Zeitzone (z. B. offline): Zeitzone des Gerä
   await createLocal(store, { title: 'Offline angelegt', due_date: '2031-03-10' });
   await S.syncWith(store, remote);
   const ev = taskEvents()[0];
-  assert.strictEqual(ev.start.dateTime, '2031-03-10T23:58:00');
+  assert.strictEqual(ev.start.dateTime, '2031-03-10T23:34:00');
   assert.strictEqual(ev.start.timeZone, Intl.DateTimeFormat().resolvedOptions().timeZone);
+});
+
+// --- Plätze am Tagesende: 25 Minuten, je 3 Tasks nebeneinander, 4 Plätze von hinten gezählt ---
+
+const SLOT_STARTS = ['23:34', '23:09', '22:44', '22:19'];
+const slotStartOf = (ev) => ev.start.dateTime.slice(11, 16);
+const slotCounts = () => {
+  const counts = {};
+  for (const e of taskEvents()) counts[slotStartOf(e)] = (counts[slotStartOf(e)] || 0) + 1;
+  return counts;
+};
+
+test('Plätze: je 3 Tasks nebeneinander, der vierte beginnt den nächsten Platz davor – jeder Platz 25 Minuten lang', async () => {
+  const store = fakeStore();
+  for (let i = 0; i < 7; i++) await createLocal(store, { title: `Task ${i}`, due_date: '2031-03-10' });
+  await S.syncWith(store, remote);
+  assert.deepStrictEqual(slotCounts(), { '23:34': 3, '23:09': 3, '22:44': 1 });
+  for (const e of taskEvents()) {
+    const minutes = (s) => Number(s.slice(11, 13)) * 60 + Number(s.slice(14, 16));
+    assert.strictEqual(minutes(e.end.dateTime) - minutes(e.start.dateTime), 25, 'kürzer als 25 Minuten würde Google nur als Strich zeichnen');
+    assert.ok(minutes(e.end.dateTime) <= 23 * 60 + 59, 'endet vor Mitternacht');
+  }
+  assert.deepStrictEqual(S.slotTimes(0), { start: '23:34', end: '23:59' });
+  assert.deepStrictEqual(S.slotTimes(3), { start: '22:19', end: '22:44' });
+});
+
+test('Plätze: nur ein Task pro Tag liegt ganz hinten, jeder Tag zählt für sich', async () => {
+  const store = fakeStore();
+  await createLocal(store, { title: 'Montag', due_date: '2031-03-10' });
+  await createLocal(store, { title: 'Dienstag 1', due_date: '2031-03-11' });
+  await createLocal(store, { title: 'Dienstag 2', due_date: '2031-03-11' });
+  await S.syncWith(store, remote);
+  assert.ok(taskEvents().every((e) => slotStartOf(e) === '23:34'));
+});
+
+test('Plätze: ab dem 13. Task an einem Tag teilen sich die am wenigsten belegten Plätze, nichts liegt vor 22:19', async () => {
+  const store = fakeStore();
+  for (let i = 0; i < 14; i++) await createLocal(store, { title: `Task ${i}`, due_date: '2031-03-10' });
+  await S.syncWith(store, remote);
+  assert.deepStrictEqual(slotCounts(), { '23:34': 4, '23:09': 4, '22:44': 3, '22:19': 3 });
+  assert.ok(taskEvents().every((e) => SLOT_STARTS.includes(slotStartOf(e))));
+});
+
+test('Plätze bleiben stabil: Löschen/Erledigen anderer Tasks verschiebt nichts, ein neuer Task füllt die Lücke', async () => {
+  const store = fakeStore();
+  const made = [];
+  for (let i = 0; i < 4; i++) made.push(await createLocal(store, { title: `Task ${i}`, due_date: '2031-03-10' }));
+  await S.syncWith(store, remote);
+  const before = Object.fromEntries(taskEvents().map((e) => [e.summary, slotStartOf(e)]));
+  assert.deepStrictEqual(slotCounts(), { '23:34': 3, '23:09': 1 });
+
+  await deleteLocal(store, made[1].id); // einer aus dem ersten Platz fällt weg
+  await doneLocal(store, made[3].id, true); // der aus dem zweiten Platz wird erledigt
+  await S.syncWith(store, remote);
+  const after = Object.fromEntries(taskEvents().map((e) => [e.summary.replace(/^✓ /, ''), slotStartOf(e)]));
+  assert.strictEqual(after['Task 0'], before['Task 0']);
+  assert.strictEqual(after['Task 2'], before['Task 2']);
+  assert.strictEqual(after['Task 3'], before['Task 3'], 'erledigt behält den Platz');
+
+  await createLocal(store, { title: 'Neu', due_date: '2031-03-10' });
+  await S.syncWith(store, remote);
+  assert.strictEqual(taskEvents().find((e) => e.summary === 'Neu').start.dateTime.slice(11, 16), '23:34', 'die Lücke im ersten Platz wird wieder gefüllt');
+});
+
+test('Datum ändern: am neuen Tag wird der Platz neu vergeben (der alte kann dort schon voll sein)', async () => {
+  const store = fakeStore();
+  for (let i = 0; i < 6; i++) await createLocal(store, { title: `Voll ${i}`, due_date: '2031-03-10' }); // Plätze 0 und 1 voll
+  const mover = await createLocal(store, { title: 'Umzieher', due_date: '2031-03-12' }); // ganz hinten (Platz 0)
+  await S.syncWith(store, remote);
+  assert.strictEqual(slotStartOf(taskEvents().find((e) => e.summary === 'Umzieher')), '23:34');
+
+  await updateLocal(store, mover.id, { due_date: '2031-03-10' });
+  await S.syncWith(store, remote);
+  const ev = taskEvents().find((e) => e.summary === 'Umzieher');
+  assert.strictEqual(ev.start.dateTime, '2031-03-10T22:44:00', 'Plätze 0 und 1 sind an diesem Tag voll, also Platz 2');
+});
+
+test('Bereits angelegte 23:58-Platzhalter (frühere Version, ohne Platznummer) werden beim Abgleich auf richtige Plätze verteilt', async () => {
+  const opts = { untimedAtEndOfDay: true, timeZone: 'Europe/Vienna' };
+  for (let i = 0; i < 4; i++) {
+    const body = S.eventBody({ title: `Alt ${i}`, due_date: '2031-03-10', priority: 'mittel', color: '9' }, opts);
+    body.start = { dateTime: '2031-03-10T23:58:00', timeZone: 'Europe/Vienna' };
+    body.end = { dateTime: '2031-03-10T23:59:00', timeZone: 'Europe/Vienna' };
+    body.extendedProperties.private.slot = '';
+    await remote.insert(body);
+  }
+  const store = fakeStore();
+  const r = await S.syncWith(store, remote);
+  assert.strictEqual(r.slotsUpdated, 4);
+  assert.deepStrictEqual(slotCounts(), { '23:34': 3, '23:09': 1 });
+  assert.strictEqual((await S.syncWith(store, remote)).slotsUpdated, 0, 'danach nichts mehr zu tun');
 });

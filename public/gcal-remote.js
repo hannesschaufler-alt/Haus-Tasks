@@ -32,7 +32,7 @@
       return data;
     }
 
-    // Zeitzone des Kalenders (nicht des Geräts) - gebraucht für den 23:58-Platzhalter-Termin, siehe sync-core.js.
+    // Zeitzone des Kalenders (nicht des Geräts) - gebraucht für die Plätze am Tagesende, siehe sync-core.js.
     // Einmal pro Kalender nachfragen, ein Fehler (z. B. offline) ist kein Problem: dann gilt die Zeitzone des Geräts.
     let timeZone = null;
     let timeZoneFor = null;

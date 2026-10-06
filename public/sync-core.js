@@ -56,12 +56,25 @@
   // Gemeinsame Einstellungen (liegen zusammen mit Kategorien/Orten im versteckten Konfigurations-Event, gelten
   // also für alle Geräte). Fehlt ein Wert, gilt die Vorgabe hier.
   //   untimedAtEndOfDay: Tasks mit Datum, aber ohne Uhrzeit, werden im Google-Kalender nicht als Ganztags-
-  //   termin, sondern als 1-Minuten-Termin am Tagesende (23:58–23:59) angelegt. Ganztagstermine stehen in
-  //   Googles Monats-/Wochen-/Tagesansicht über allen Terminen mit Uhrzeit und schieben normale Termine
-  //   nach unten, sobald viele Tasks an einem Tag liegen; am Tagesende sortiert, stören sie nicht mehr.
+  //   termin, sondern als kurzer Termin am Tagesende angelegt. Ganztagstermine stehen in Googles Monats-/
+  //   Wochen-/Tagesansicht über allen Terminen mit Uhrzeit und schieben normale Termine nach unten, sobald
+  //   viele Tasks an einem Tag liegen; am Tagesende sortiert, stören sie nicht mehr.
+  //   Damit die Titel in der Tagesansicht lesbar bleiben (kürzer als ~25 Minuten wird nur ein Strich
+  //   gezeichnet, Termine mit gleicher Startzeit stehen nebeneinander), bekommt jeder Task einen Platz:
+  //   25 Minuten lang, je 3 Tasks nebeneinander im selben Platz, 4 Plätze von hinten gezählt
+  //   (Platz 0 = 23:34–23:59, 1 = 23:09–23:34, 2 = 22:44–23:09, 3 = 22:19–22:44). Das reicht für 12 Tasks pro
+  //   Tag; weitere teilen sich die am wenigsten belegten Plätze (dann eben schmalere Spalten).
   const DEFAULT_SETTINGS = { untimedAtEndOfDay: true };
-  const SLOT_START = '23:58';
-  const SLOT_END = '23:59';
+  const SLOT_COUNT = 4;
+  const SLOT_PER_ROW = 3;
+  const SLOT_MINUTES = 25;
+  const SLOT_LAST_END = 23 * 60 + 59; // 23:59, ein Event darf nicht über Mitternacht gehen
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const hhmm = (mins) => `${pad2(Math.floor(mins / 60))}:${pad2(mins % 60)}`;
+  function slotTimes(index) {
+    const end = SLOT_LAST_END - index * SLOT_MINUTES;
+    return { start: hhmm(end - SLOT_MINUTES), end: hhmm(end) };
+  }
   // Wie viele Tasks pro Sync auf die neue Darstellung umgestellt werden (2 Google-Aufrufe je Task). Der Rest
   // folgt automatisch beim nächsten Sync, so blockiert die einmalige Umstellung vieler Alt-Tasks nicht lange.
   const SLOT_RECONCILE_LIMIT = 40;
@@ -70,10 +83,30 @@
     return { ...DEFAULT_SETTINGS, ...(raw && typeof raw === 'object' ? raw : {}) };
   }
 
-  // Bekommt der Task im Kalender den 23:58-Platzhalter-Termin? Nur bei echtem Datum und ohne eigene Uhrzeit
+  // Bekommt der Task im Kalender einen Platz am Tagesende? Nur bei echtem Datum und ohne eigene Uhrzeit
   // (Platzhalter-Termine für datumslose Tasks bleiben ganztägig und unsichtbar auf 1970).
   function usesTimeSlot(t, opts) {
     return !!(opts && opts.untimedAtEndOfDay && t.due_date && !t.due_time);
+  }
+
+  // Legt (falls noch keiner da ist) den Platz fest: der erste Platz mit weniger als SLOT_PER_ROW Tasks an diesem
+  // Tag, sonst der am wenigsten belegte. Ein einmal vergebener Platz bleibt stehen – auch wenn andere Tasks
+  // erledigt, gelöscht oder verschoben werden –, damit sich Termine im Kalender nicht ständig verschieben und
+  // nicht bei jeder Änderung Folge-Patches nötig sind. Erledigte Tasks behalten ihren Platz ebenfalls, damit ein
+  // „Rückgängig“ keinen vierten Task in dieselbe Reihe zwingt. `tasks` ist der lokale Stand (inkl. dem, was
+  // andere Geräte schon vergeben haben); gleichzeitige Vergabe auf zwei Geräten kann zu einer Reihe mit 4 Tasks
+  // führen – harmlos, nur etwas schmaler.
+  function withSlotIndex(tasks, t, opts) {
+    if (!usesTimeSlot(t, opts)) return { ...t, slot_index: null };
+    if (Number.isInteger(t.slot_index) && t.slot_index >= 0 && t.slot_index < SLOT_COUNT) return t;
+    const counts = new Array(SLOT_COUNT).fill(0);
+    for (const o of tasks) {
+      if (o.id === t.id || o.deleted || !o.time_slot || o.due_date !== t.due_date) continue;
+      if (Number.isInteger(o.slot_index) && o.slot_index >= 0 && o.slot_index < SLOT_COUNT) counts[o.slot_index]++;
+    }
+    let index = counts.findIndex((c) => c < SLOT_PER_ROW);
+    if (index < 0) index = counts.indexOf(Math.min(...counts));
+    return { ...t, slot_index: index };
   }
 
   function eventBody(t, opts = {}) {
@@ -97,9 +130,10 @@
       end = { date: null, dateTime: `${endAt.date}T${endAt.time}:00`, timeZone: TIME_ZONE };
     } else if (slot) {
       // Zeitzone des Kalenders (nicht des Geräts): sonst rutscht der Task von einem Gerät in einer anderen
-      // Zeitzone auf den Folgetag, weil 23:58 dort woanders liegt.
-      start = { date: null, dateTime: `${t.due_date}T${SLOT_START}:00`, timeZone: tz };
-      end = { date: null, dateTime: `${t.due_date}T${SLOT_END}:00`, timeZone: tz };
+      // Zeitzone auf den Folgetag, weil die Platzzeiten dort woanders liegen.
+      const times = slotTimes(Number.isInteger(t.slot_index) && t.slot_index >= 0 && t.slot_index < SLOT_COUNT ? t.slot_index : 0);
+      start = { date: null, dateTime: `${t.due_date}T${times.start}:00`, timeZone: tz };
+      end = { date: null, dateTime: `${t.due_date}T${times.end}:00`, timeZone: tz };
     } else {
       start = { date: due, dateTime: null, timeZone: null };
       end = { date: Recurrence.addDays(due, 1), dateTime: null, timeZone: null }; // Ende ganztägiger Events ist exklusiv
@@ -122,7 +156,8 @@
           series_id: t.series_id || '',
           color: t.color || '', // die „echte“ Farbe, damit sie nach einem Erledigt/Grau-Zyklus wiederhergestellt werden kann
           noDate: t.due_date ? '' : 'true', // Platzhalterdatum, kein echtes Fälligkeitsdatum
-          noTime: slot ? 'true' : '', // 23:58-Platzhalter statt echter Uhrzeit (siehe usesTimeSlot)
+          noTime: slot ? 'true' : '', // Platz am Tagesende statt echter Uhrzeit (siehe usesTimeSlot)
+          slot: slot && Number.isInteger(t.slot_index) ? String(t.slot_index) : '', // welcher Platz (siehe withSlotIndex)
           bucket: t.bucket || '', // GTD-Status (inbox/todo/later), siehe offline-logic.js
         },
       },
@@ -161,15 +196,17 @@
     // Rückfall würde ein Merge das Datum sonst auf den Platzhalter zurücksetzen, nicht nur den Patch ablehnen.
     const startDate = ev.start?.date || (ev.start?.dateTime ? ev.start.dateTime.slice(0, 10) : null);
     const due_date = p.noDate === 'true' ? null : (startDate || null);
-    // 23:58-Platzhalter (siehe usesTimeSlot) zählt als „keine Uhrzeit“. Der Marker allein reicht nicht – ohne
-    // dateTime (z. B. wieder auf ganztägig gestellt) ist der Termin kein Platzhalter mehr.
+    // Ein Platz am Tagesende (siehe usesTimeSlot) zählt als „keine Uhrzeit“. Der Marker allein reicht nicht – ohne
+    // dateTime (z. B. wieder auf ganztägig gestellt) ist der Termin kein Platzhalter mehr. Ältere Termine
+    // dieser Art (23:58–23:59, noch ohne Platznummer) bekommen slot_index null und werden beim Abgleich umgestellt.
     const time_slot = p.noTime === 'true' && !!ev.start?.dateTime;
+    const slot_index = time_slot && /^\d+$/.test(p.slot || '') ? Number(p.slot) : null;
     const due_time = due_date && ev.start?.dateTime && !time_slot ? ev.start.dateTime.slice(11, 16) : null;
     // Nur übernehmen, wenn die Endzeit auf denselben Tag fällt – ein über Mitternacht gehender Termin
     // wird (wie beim Anlegen, siehe eventBody()) nicht unterstützt, dann lieber die Vorgabe (eine Stunde).
     const due_end_time = due_time && ev.end?.dateTime && ev.end.dateTime.slice(0, 10) === due_date ? ev.end.dateTime.slice(11, 16) : null;
     return {
-      title, due_date, due_time, due_end_time, time_slot, done, color,
+      title, due_date, due_time, due_end_time, time_slot, slot_index, done, color,
       category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
       notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
       bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo',
@@ -320,8 +357,9 @@
         // Kein Event vorhanden (erste Anlage): einfach mit dem vollen lokalen Stand anlegen, es gibt
         // noch nichts, womit man ihn zusammenführen müsste.
         if (!task.google_event_id) {
-          const ev = await remote.insert(eventBody(task, opts));
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, time_slot: usesTimeSlot(task, opts) } : t));
+          const slotted = withSlotIndex(tasks, { ...task, slot_index: null }, opts);
+          const ev = await remote.insert(eventBody(slotted, opts));
+          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, time_slot: usesTimeSlot(slotted, opts), slot_index: slotted.slot_index } : t));
           await store.saveRawTasks(tasks);
           sent.push(entry);
           await store.removeOutboxEntry(entry.seq);
@@ -342,8 +380,9 @@
         }
 
         if (!freshEvent) {
-          const ev = await remote.insert(eventBody(task, opts)); // neu anlegen, mit dem vollen lokalen Stand
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, time_slot: usesTimeSlot(task, opts) } : t));
+          const slotted = withSlotIndex(tasks, { ...task, slot_index: null }, opts);
+          const ev = await remote.insert(eventBody(slotted, opts)); // neu anlegen, mit dem vollen lokalen Stand
+          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, time_slot: usesTimeSlot(slotted, opts), slot_index: slotted.slot_index } : t));
           await store.saveRawTasks(tasks);
           sent.push(entry);
           await store.removeOutboxEntry(entry.seq);
@@ -353,7 +392,12 @@
         const clash = detectClash(entry, task, freshEvent);
         if (clash) clashes.push(clash);
 
-        const merged = { ...taskShapeFromEvent(freshEvent), ...entry.patch };
+        const freshShape = taskShapeFromEvent(freshEvent);
+        let merged = { ...freshShape, ...entry.patch };
+        // Anderer Tag (oder Platz fehlt noch): Platz neu vergeben, am neuen Tag kann der alte schon voll sein.
+        if (merged.due_date !== freshShape.due_date) merged = { ...merged, slot_index: null };
+        merged = withSlotIndex(tasks, { ...merged, id: task.id }, opts);
+        delete merged.id;
         const ev = await remote.patch(task.google_event_id, eventBody(merged, opts));
         tasks = tasks.map((t) => (t.id === task.id ? { ...t, ...merged, google_event_id: ev.id, google_updated: ev.updated, time_slot: usesTimeSlot(merged, opts) } : t));
         await store.saveRawTasks(tasks);
@@ -403,16 +447,23 @@
   // wird beim nächsten Sync erneut versucht.
   async function reconcileTimeSlots(store, remote, opts, dirtyIds) {
     let tasks = await store.getRawTasks();
+    const enabled = !!opts.untimedAtEndOfDay;
+    // Umzustellen sind Tasks, deren Event nicht zur Einstellung passt – und bei „an“ auch ältere Platzhalter ohne
+    // Platznummer (23:58–23:59 aus einer früheren Version), die jetzt einen richtigen Platz bekommen.
     const candidates = tasks.filter((t) => t.google_event_id && !t.deleted && t.due_date && !t.due_time && !dirtyIds.has(t.id)
-      && !!t.time_slot !== !!opts.untimedAtEndOfDay && t.slot_failed !== !!opts.untimedAtEndOfDay);
+      && (!!t.time_slot !== enabled || (enabled && t.time_slot && !Number.isInteger(t.slot_index)))
+      && t.slot_failed !== enabled);
     let updated = 0;
     for (const task of candidates.slice(0, SLOT_RECONCILE_LIMIT)) {
       try {
         const fresh = await remote.get(task.google_event_id);
-        const merged = taskShapeFromEvent(fresh);
+        let merged = taskShapeFromEvent(fresh);
         if (merged.due_time || !merged.due_date) continue; // inzwischen ein Termin mit echter Uhrzeit bzw. ohne Datum: nichts umzustellen
+        // `tasks` wird nach jedem Task fortgeschrieben, so sieht der nächste die schon vergebenen Plätze.
+        merged = { ...withSlotIndex(tasks, { ...merged, id: task.id }, opts) };
+        delete merged.id;
         const ev = await remote.patch(task.google_event_id, eventBody(merged, opts));
-        tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_updated: ev.updated, time_slot: usesTimeSlot(merged, opts), slot_failed: undefined } : t));
+        tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_updated: ev.updated, time_slot: usesTimeSlot(merged, opts), slot_index: merged.slot_index, slot_failed: undefined } : t));
         await store.saveRawTasks(tasks);
         updated++;
       } catch (e) {
@@ -446,5 +497,5 @@
     return { pulled, pushed: sent.length, failed, clashes, aborted, abortReason, slotsUpdated };
   }
 
-  return { syncWith, pull, push, syncConfig, reconcileTimeSlots, eventBody, taskShapeFromEvent, usesTimeSlot, resolveSettings, DEFAULT_SETTINGS, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
+  return { syncWith, pull, push, syncConfig, reconcileTimeSlots, eventBody, taskShapeFromEvent, usesTimeSlot, withSlotIndex, slotTimes, resolveSettings, DEFAULT_SETTINGS, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
 });
