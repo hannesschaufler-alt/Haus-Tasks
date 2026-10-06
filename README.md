@@ -48,7 +48,7 @@ Die gehostete Adresse öffnen → „Mit Google anmelden“ → die Kalender-ID 
 
 ## Weitere Haushaltsmitglieder einladen
 
-Oben rechts auf **👪** klicken (oder `/haushalt.html` öffnen). Die Seite führt durch:
+Oben rechts auf das **⚙** tippen → „👪 Haushalt einladen“ (oder `/haushalt.html` öffnen). Die Seite führt durch:
 1. Den Kalender „Haus-Tasks“ direkt in Google Kalender für die Person freigeben (Berechtigung „Änderungen an Terminen vornehmen“).
 2. Eine vorformulierte Nachricht mit Link zum Weiterschicken.
 3. Einen QR-Code mit demselben Link (samt Kalender-ID), praktisch zum direkten Scannen.
@@ -62,7 +62,7 @@ Die Person öffnet den Link, meldet sich mit ihrem **eigenen** Google-Konto an (
 Jedes Gerät speichert im Browser (IndexedDB) und synct direkt mit Google:
 
 - **Automatisch:** beim Öffnen, beim Wiederverbinden, beim Zurückwechseln zur App, alle 5 Minuten und sofort nach jeder eigenen Änderung (sofern erreichbar).
-- **Manuell:** der Sync-Button oben rechts. Ohne Verbindung zeigt die Kopfzeile „Nicht erreichbar · N Änderung(en) warten“ statt eines Fehlers.
+- **Manuell:** ⚙ oben rechts → „Jetzt synchronisieren“. Der kleine Punkt am Zahnrad zeigt den Stand (grau = unbekannt/nicht erreichbar, grün = in Ordnung, rot = Fehler); der Text dazu steht im Dialog, ohne Verbindung z. B. „Nicht erreichbar · N Änderung(en) warten“ statt eines Fehlers.
 - **Konflikte:** Ändern zwei Geräte gleichzeitig unterschiedliche Felder desselben Tasks, bleiben beide Änderungen erhalten (siehe oben). Bei einer Meldung wie „Bei „X“ gab es während der Offline-Zeit auch eine Änderung“ ist nichts verloren gegangen, das ist nur ein Hinweis.
 - **Serien:** Der Folgetermin entsteht ausschließlich auf dem Gerät, auf dem tatsächlich abgehakt wurde (verhindert doppelte Folgetermine). Wird direkt in Googles eigener Oberfläche „✓ “ vor den Titel geschrieben, wird das übernommen, aber die Serie läuft dann nicht automatisch weiter – dafür die App verwenden.
 - **Anmeldung:** Der Zugriffstoken läuft nach etwa einer Stunde ab und erneuert sich meist unbemerkt im Hintergrund, solange die Google-Sitzung im Browser aktiv ist. Ein echter, dauerhafter Login ganz ohne eigenen Server würde ein Google-Client-Secret im öffentlichen Quelltext erfordern (geprüft, siehe `public/auth.js`) – bewusst nicht gemacht. Falls doch mal eine sichtbare erneute Anmeldung nötig ist, merkt sich die App das zuletzt genutzte Konto (`public/google-config.js`s `email`-Scope), sodass dabei nur noch „Zulassen“ statt Kontoauswahl nötig ist.

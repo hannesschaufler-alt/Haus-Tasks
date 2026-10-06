@@ -45,8 +45,16 @@
   .btn.small { padding: 5px 12px; font-size: 13px; }
   .icon-btn { border: none; background: none; color: var(--muted); padding: 6px; border-radius: 8px; line-height: 1; }
   .icon-btn:hover { color: var(--danger); background: var(--chip); }
-  .icon-btn.invite { text-decoration: none; }
-  .icon-btn.invite:hover { color: var(--accent); }
+  /* Zahnrad in der Kopfzeile: der einzige Eintrag rechts; der kleine Punkt ist der Sync-Status (grau/grün/rot). */
+  .gear { position: relative; font-size: 20px; padding: 6px 8px; }
+  .gear:hover { color: var(--accent); }
+  .gear .dot { position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px; border: 2px solid var(--bg); box-sizing: content-box; }
+  /* Einstellungs-Dialog: kleine Gruppen mit Überschrift. */
+  .set-group { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .set-group h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .set-row .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  a.btn { text-decoration: none; display: inline-block; }
 
   /* Klappbare Abschnitte ("Anstehend"/"Später") – bewusst unauffälliger als der frühere Navigationsblock. */
   .section { margin-bottom: 18px; }
@@ -231,11 +239,7 @@
   <header>
     <a class="brand" href="#/">🏠 Haus-Tasks<span class="inbox-badge" id="inboxBadge" hidden title="Unsortierte Einträge in der Inbox"></span></a>
     <div class="sync">
-      <a class="icon-btn invite" href="haushalt.html" title="Haushalt einladen">👪</a>
-      <button class="icon-btn" id="settingsBtn" title="Einstellungen">⚙</button>
-      <span class="dot" id="syncDot"></span><span id="syncText">…</span><button class="btn small" id="syncBtn">Sync</button>
-      <a class="icon-btn" href="#/debug" title="Debug: Rohdaten &amp; Sync-Warteschlange">🛠</a>
-      <button class="icon-btn" id="signOutBtn" title="Bei Google abmelden">⎋</button>
+      <button class="icon-btn gear" id="settingsBtn" title="Einstellungen, Sync &amp; mehr">⚙<span class="dot" id="syncDot"></span></button>
     </div>
   </header>
   <div id="authBanner"></div>
@@ -767,13 +771,24 @@ function render() {
   const badge = $('#inboxBadge');
   badge.hidden = inboxCount === 0;
   badge.textContent = inboxCount;
+  paintSyncStatus();
+}
+
+// Sync-Status: der Punkt am Zahnrad ist immer da, der Text steht nur im Einstellungs-Dialog (dort auch der
+// Sync-Knopf) – deshalb darf #syncText fehlen, wenn der Dialog gerade nicht offen ist.
+function paintSyncStatus() {
   const s = state.status;
-  $('#syncDot').className = 'dot ' + (!s || s.offline ? '' : state.lastSyncError ? 'err' : 'ok');
-  $('#syncText').textContent = !s ? '' : s.offline ? `Nicht erreichbar${s.pending ? ` · ${s.pending} Änderung(en) warten` : ''}`
+  const cls = 'dot ' + (!s || s.offline ? '' : state.lastSyncError ? 'err' : 'ok');
+  $('#syncDot').className = cls;
+  const dlgDot = $('#syncDotDlg');
+  if (dlgDot) dlgDot.className = cls;
+  const text = $('#syncText');
+  if (!text) return;
+  text.textContent = !s ? '' : s.offline ? `Nicht erreichbar${s.pending ? ` · ${s.pending} Änderung(en) warten` : ''}`
     : state.lastSyncError ? 'Sync-Fehler'
-    : state.lastSyncAt ? 'Sync ' + state.lastSyncAt.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+    : state.lastSyncAt ? 'Zuletzt synchronisiert ' + state.lastSyncAt.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
     : 'Noch nicht synchronisiert';
-  $('#syncText').title = state.lastSyncError || '';
+  text.title = state.lastSyncError || '';
 }
 
 // --- Formular ---
@@ -1110,7 +1125,8 @@ let syncing = false;
 async function syncNow(silent) {
   if (syncing) return;
   syncing = true;
-  $('#syncBtn').disabled = true;
+  const syncBtn = () => $('#syncBtn'); // steckt im Einstellungs-Dialog, existiert also nicht immer
+  if (syncBtn()) syncBtn().disabled = true;
   if (!Offline.ping()) {
     // Lokal schon klar: nicht angemeldet oder noch kein Kalender eingerichtet – kein Sync-Versuch nötig.
     state.online = true; // kein Verbindungsproblem, sondern fehlende Einrichtung
@@ -1169,7 +1185,7 @@ async function syncNow(silent) {
     state.status = await computeStatus();
   }
   syncing = false;
-  $('#syncBtn').disabled = false;
+  if (syncBtn()) syncBtn().disabled = false;
   render();
 }
 
@@ -1190,21 +1206,42 @@ async function openSettings() {
   };
   form.replaceChildren(
     h('h3', {}, 'Einstellungen'),
-    h('div', { class: 'field' },
+    h('div', { class: 'set-group' },
+      h('h4', {}, 'Synchronisation'),
+      h('div', { class: 'set-row' },
+        h('span', { class: 'status' }, h('span', { class: 'dot', id: 'syncDotDlg' }), h('span', { id: 'syncText' }, '…')),
+        h('button', { type: 'button', class: 'btn small', id: 'syncBtn', onclick: () => syncNow(false) }, 'Jetzt synchronisieren'))),
+    h('div', { class: 'set-group' },
+      h('h4', {}, 'Google-Kalender'),
       h('label', { for: 'optSlot', style: 'display:flex;gap:10px;align-items:flex-start;color:var(--text)' }, slot,
         h('span', {}, 'Tasks ohne Uhrzeit am Tagesende im Google-Kalender einsortieren')),
       h('div', { class: 'hint' }, 'Tasks mit Datum, aber ohne Uhrzeit, erscheinen im Google-Kalender sonst als Ganztagstermin ganz oben und schieben deine normalen Termine nach unten. Mit dieser Option liegen sie als 25-Minuten-Termine am Ende des Tages (ohne Erinnerung): je 3 Tasks nebeneinander, bis zu 4 Reihen (ab 22:19 Uhr), damit die Titel lesbar bleiben. In der App bleibt es ein Task ohne Uhrzeit. Gilt für alle Geräte und stellt bestehende Tasks einmalig um.')),
+    h('div', { class: 'set-group' },
+      h('h4', {}, 'Haushalt & Hilfe'),
+      h('div', { class: 'set-row' },
+        h('a', { class: 'btn small', href: 'haushalt.html' }, '👪 Haushalt einladen'),
+        h('a', { class: 'btn small', href: '#/debug', title: 'Rohdaten & Sync-Warteschlange', onclick: () => $('#dlg').close() }, '🛠 Debug-Ansicht'))),
+    h('div', { class: 'set-group' },
+      h('h4', {}, 'Konto'),
+      h('div', { class: 'set-row' },
+        h('button', {
+          type: 'button', class: 'btn small danger', onclick: () => {
+            if (!confirm('Bei Google abmelden?')) return;
+            $('#dlg').close();
+            Auth.signOut();
+            renderSignIn();
+          },
+        }, '⎋ Bei Google abmelden'))),
     h('div', { class: 'actions' },
       h('span'),
       h('div', { class: 'right' },
         h('button', { type: 'button', class: 'btn', onclick: () => $('#dlg').close() }, 'Abbrechen'),
         h('button', { type: 'submit', class: 'btn primary' }, 'Speichern'))));
+  paintSyncStatus();
   $('#dlg').showModal();
 }
 
 $('#settingsBtn').onclick = openSettings;
-$('#syncBtn').onclick = () => syncNow(false);
-$('#signOutBtn').onclick = () => { if (confirm('Bei Google abmelden?')) { Auth.signOut(); renderSignIn(); } };
 window.addEventListener('hashchange', render);
 window.addEventListener('online', () => syncNow(true));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(true); });
