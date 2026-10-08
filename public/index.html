@@ -92,27 +92,32 @@
   select, input, textarea { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
   select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
-  .list { display: flex; flex-direction: column; gap: 10px; }
-  .date { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 58px; padding: 5px 0; border-radius: 10px;
-    background: var(--chip); line-height: 1.1; text-align: center; cursor: pointer; transition: background .15s; }
-  .date:hover { background: color-mix(in srgb, var(--accent) 15%, var(--chip)); }
-  .date .day { font-size: 24px; font-weight: 700; }
-  .date .wd, .date .mon { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-  .date .time { font-size: 10px; color: inherit; font-weight: 600; margin-top: 1px; }
-  .date.soon { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
-  .date.late { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
-  .date.soon .wd, .date.soon .mon, .date.late .wd, .date.late .mon { color: inherit; }
-  .date.done, .date.none { opacity: .55; }
-  /* Unsichtbarer Auslöser für den nativen Datumswähler, siehe Funktion dateTile weiter unten. */
+  /* Asana-Listenansicht: eine zusammenhängende Karte, Zeilen nur durch dünne Linien getrennt, einzeilig. */
+  .list { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
   .date-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; pointer-events: none; }
-  .task { display: grid; grid-template-columns: auto auto 1fr auto; gap: 12px; align-items: center; background: var(--card);
-    border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow); transition: box-shadow .15s, border-color .15s; }
-  .task:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+  .task { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); transition: background .12s; }
+  .task:last-child { border-bottom: 0; }
+  .task:hover { background: color-mix(in srgb, var(--accent) 6%, var(--card)); }
+  .task .right { display: flex; align-items: center; gap: 8px; justify-self: end; }
+  .task .avatar { width: 24px; height: 24px; min-width: 24px; min-height: 24px; max-width: 24px; max-height: 24px; font-size: 11px; }
+  .avatar-slot { width: 24px; flex: none; }
+  .task .badge.chk, .task .badge.list-move { padding: 1px 8px; font-size: 11.5px; }
+  /* Schnell-Verschieben nur noch beim Darüberfahren am Desktop – auf dem Handy steht dafür "Status" im Detailformular. */
+  .task .badge.list-move { display: none; }
+  @media (hover: hover) { .task:hover .badge.list-move { display: inline-flex; } }
+  .date-chip { position: relative; display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 6px; font-size: 12.5px;
+    color: var(--muted); white-space: nowrap; cursor: pointer; transition: background .12s; }
+  .date-chip:hover { background: var(--chip); }
+  .date-chip.soon { color: var(--accent); font-weight: 600; }
+  .date-chip.late { color: var(--danger); font-weight: 600; }
+  .date-chip.done { opacity: .55; }
+  .date-chip.none { opacity: .3; }
+  .date-chip.none:hover { opacity: .8; }
   .task.done { opacity: .72; }
   /* Auswahlmodus: die ganze Zeile ist nur noch Auswahlfläche, nichts darin reagiert einzeln. */
   .task.selectable { cursor: pointer; }
   .task.selectable * { pointer-events: none; }
-  .task.selectable.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+  .task.selectable.selected, .task.selectable.selected:hover { background: color-mix(in srgb, var(--accent) 14%, var(--card)); }
   .select-dot { display: grid; place-content: center; width: 22px; height: 22px; min-width: 22px; border-radius: 50%;
     border: 2px solid var(--line); font-size: 13px; font-weight: 700; color: var(--accent-text); justify-self: center; align-self: center; }
   .task.selected .select-dot { background: var(--accent); border-color: var(--accent); }
@@ -134,7 +139,7 @@
   .task input[type=checkbox]:checked { border-color: var(--accent); background: var(--accent); }
   .task input[type=checkbox]:checked::before { transform: scale(1); }
   .task .main { min-width: 0; cursor: pointer; }
-  .title { font-weight: 600; overflow-wrap: anywhere; letter-spacing: -.01em; }
+  .title { font-weight: 500; overflow-wrap: anywhere; line-height: 1.3; }
   .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 4px; font-size: 12.5px; color: var(--muted); align-items: center; }
   .badge { padding: 2px 9px; border-radius: 999px; background: var(--chip); font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
   .empty { text-align: center; color: var(--muted); padding: 32px 0; }
@@ -219,11 +224,10 @@
     .btn { padding: 10px 14px; }
     .btn.small { padding: 7px 12px; }
     .icon-btn { padding: 10px; }
-    .task { grid-template-columns: auto auto 1fr auto; gap: 10px; padding: 10px; }
-    .task input[type=checkbox] { width: 26px; height: 26px; min-width: 26px; min-height: 26px; max-width: 26px; max-height: 26px; }
-    .select-dot { width: 26px; height: 26px; min-width: 26px; }
-    .date { width: 50px; }
-    .date .day { font-size: 21px; }
+    .task { gap: 8px; padding: 7px 10px; }
+    .task input[type=checkbox] { width: 24px; height: 24px; min-width: 24px; min-height: 24px; max-width: 24px; max-height: 24px; }
+    .select-dot { width: 24px; height: 24px; min-width: 24px; }
+    .task .right { gap: 6px; }
     .toolbar select { flex: 1; min-width: 0; }
     header { flex-wrap: wrap; }
     .group-card h2 { flex-wrap: wrap; }
@@ -243,6 +247,7 @@
     </div>
   </header>
   <div id="authBanner"></div>
+  <form id="quickForm" hidden><input id="quickInput" class="quick-capture" type="text" enterkeyhint="send" autocomplete="off" placeholder="Idee oder Task eintippen, Enter zum Speichern …"></form>
   <main id="view"></main>
 </div>
 
@@ -267,7 +272,7 @@ const ASSIGNEE_INITIAL = { Caro: 'C', Hannes: 'H' };
 const ASSIGNEE_COLOR = { Caro: '#e05297', Hannes: '#2f6fed' }; // nur fürs Avatar-Kürzel, unabhängig von Kategoriefarben
 const state = {
   tasks: [], cfg: null, status: null, cats: new Set(), locs: new Set(), assignees: new Set(), showDone: false, sort: 'due', expanded: new Set(),
-  lastSyncAt: null, lastSyncError: null, online: true, focusQuickCapture: false, syncHistory: [], selecting: false, selected: new Set(),
+  lastSyncAt: null, lastSyncError: null, online: true, syncHistory: [], selecting: false, selected: new Set(),
   todoOpen: true, laterOpen: false, // "Später" bewusst standardmäßig eingeklappt, weniger prominent als "Anstehend"
 };
 
@@ -324,27 +329,22 @@ async function quickSetDate(t, value) {
   } catch (e) { toast(e.message); reload(); }
 }
 
-function dateTile(t) {
+// Kompakte Datumsangabe rechts in der Zeile ("Mi 30.9." plus ggf. Uhrzeit); antippen öffnet direkt den
+// Datumswähler. Termine mit Uhrzeit zeigen sie mit an, den vollen Wortlaut gibt es im Tooltip.
+function dateChip(t) {
   const picker = h('input', { type: 'date', value: t.due_date || '', class: 'date-input', tabindex: -1, 'aria-hidden': 'true' });
   picker.addEventListener('click', (e) => e.stopPropagation());
   picker.addEventListener('change', () => quickSetDate(t, picker.value));
   const openPicker = (e) => { e.stopPropagation(); picker.showPicker ? picker.showPicker() : picker.focus(); };
 
-  if (!t.due_date) {
-    return h('div', { class: 'date none', title: 'Datum setzen – antippen', onclick: openPicker },
-      h('span', { class: 'day' }, '–'), h('span', { class: 'mon' }, 'offen'), picker);
-  }
+  if (!t.due_date) return h('span', { class: 'date-chip none', title: 'Datum setzen – antippen', onclick: openPicker }, '–', picker);
   const d = new Date(t.due_date + 'T12:00:00');
   const diff = dayDiff(t.due_date);
   const cls = t.done ? ' done' : diff < 0 ? ' late' : diff <= 1 ? ' soon' : '';
   const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? ` ’${String(d.getFullYear()).slice(2)}` : '';
   const timeLabel = t.due_time && (t.due_end_time ? `${t.due_time}–${t.due_end_time}` : t.due_time);
-  return h('div', { class: 'date' + cls, title: fmtDate(t.due_date) + (t.due_time ? `, ${timeLabel} Uhr` : '') + ' – antippen zum Ändern', onclick: openPicker },
-    h('span', { class: 'wd' }, d.toLocaleDateString('de-DE', { weekday: 'short' }).replace('.', '')),
-    h('span', { class: 'day' }, String(d.getDate())),
-    h('span', { class: 'mon' }, d.toLocaleDateString('de-DE', { month: 'short' }).replace('.', '') + yearSuffix),
-    timeLabel && h('span', { class: 'time' }, timeLabel),
-    picker);
+  const label = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }).replace(/\.,\s*/, ' ') + yearSuffix + (timeLabel ? ` · ${timeLabel}` : '');
+  return h('span', { class: 'date-chip' + cls, title: fmtDate(t.due_date) + (timeLabel ? `, ${timeLabel} Uhr` : '') + ' – antippen zum Ändern', onclick: openPicker }, label, picker);
 }
 
 
@@ -379,21 +379,20 @@ function taskRow(t) {
     const sel = state.selected.has(t.id);
     return h('div', { class: 'task selectable' + (sel ? ' selected' : '') + (t.done ? ' done' : ''), onclick: () => toggleSelect(t.id) },
       h('span', { class: 'select-dot' }, sel ? '✓' : ''),
-      dateTile(t),
       h('div', { class: 'main' },
         h('div', { class: 'title' }, t.title),
         (t.category || t.location) && h('div', { class: 'meta' },
           t.category && h('span', { class: 'badge' }, t.category), t.location && h('span', { class: 'badge' }, t.location))),
-      avatar(t.assignee));
+      h('div', { class: 'right' }, dateChip(t), avatar(t.assignee) || h('span', { class: 'avatar-slot' })));
   }
+  // Einzeilig wie Asanas Listenansicht: Häkchen, Titel, rechts Checklisten-Stand, Datum, Zuständigkeit.
   return h('div', { class: 'task' + (t.done ? ' done' : '') },
     h('input', { type: 'checkbox', checked: t.done, title: t.done ? 'Wieder öffnen' : 'Abhaken', onchange: (e) => toggleDone(t, e.target.checked) }),
-    dateTile(t),
     h('div', { class: 'main', onclick: () => openForm(t) },
       h('div', { class: 'title' }, t.title),
-      h('div', { class: 'meta' }, t.checklist.length > 0 && checklistBadge(t), listMoveBadge(t)),
       state.expanded.has(t.id) && t.checklist.length > 0 && checklistView(t)),
-    avatar(t.assignee));
+    h('div', { class: 'right' },
+      t.checklist.length > 0 && checklistBadge(t), listMoveBadge(t), dateChip(t), avatar(t.assignee) || h('span', { class: 'avatar-slot' })));
 }
 
 // Kleiner Avatar-Kreis mit Kürzel für die Zuständigkeit, wie Asanas Zuweisungs-Icons.
@@ -582,37 +581,36 @@ function chipGroup(label, names, set, manageHref) {
 }
 
 // --- Schnellerfassung & Inbox ---
-// GTD-Prinzip: erfassen ohne nachzudenken (nur Titel, Enter), einsortieren kommt danach. Der Fokus bleibt
-// nach dem Speichern im Feld, damit man mehrere Ideen direkt hintereinander eintippen kann – da render()
-// die ganze Seite neu aufbaut, muss der Fokus über ein Flag in state gezielt wiederhergestellt werden.
-// Als echtes <form> statt per keydown-Abfrage auf "Enter": Handy-Tastaturen schicken bei der Aktionstaste
-// (z. B. "Weiter"/"Fertig") nicht zuverlässig ein Enter-Tastenereignis, lösen aber immer das Absenden des
-// Formulars aus. enterkeyhint sorgt zusätzlich dafür, dass die Taste als "Fertig" statt "Weiter" erscheint.
-let quickCaptureBusy = false;
-function quickCaptureInput() {
-  const input = h('input', {
-    type: 'text', class: 'quick-capture', placeholder: 'Idee oder Task eintippen, Enter zum Speichern …',
-    enterkeyhint: 'done', autocomplete: 'off',
-  });
-  const form = h('form', {
-    onsubmit: async (e) => {
-      e.preventDefault();
-      const title = input.value.trim();
-      if (!title || quickCaptureBusy) return;
-      quickCaptureBusy = true;
+// GTD-Prinzip: erfassen ohne nachzudenken (nur Titel, Enter), einsortieren kommt danach.
+// Das Feld steht fest im Seitenrahmen (index.html, #quickForm), NICHT in der per render() immer wieder
+// neu aufgebauten Ansicht: Bei jedem Speichern und jedem Sync-Abschluss wird die ganze Ansicht ersetzt, ein
+// dort liegendes Feld würde dabei Fokus und schon getippten Text verlieren – so lassen sich mehrere
+// Einträge direkt hintereinander eintippen, auf dem Handy bleibt die Tastatur offen.
+// Echtes <form> statt keydown auf "Enter": Handy-Tastaturen schicken bei der Aktionstaste nicht zuverlässig
+// ein Enter-Tastenereignis, lösen aber immer das Absenden aus. enterkeyhint "send" zeigt die Taste als
+// Senden-Pfeil und lässt (anders als "done") die Tastatur offen.
+// Die Einträge laufen über eine Kette nacheinander durch: Offline.mutate() liest und schreibt die ganze
+// Taskliste, zwei gleichzeitige Aufrufe würden sich sonst gegenseitig überschreiben.
+let quickCaptureChain = Promise.resolve();
+function initQuickCapture() {
+  const form = $('#quickForm');
+  const input = $('#quickInput');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const title = input.value.trim();
+    if (!title) return;
+    input.value = ''; // sofort leeren, damit man ohne Wartezeit den nächsten Eintrag tippen kann
+    quickCaptureChain = quickCaptureChain.then(async () => {
       try {
         await Offline.mutate('task', 'create', { input: { title, bucket: 'inbox' } });
-        state.focusQuickCapture = true;
         await reload();
         kickSync();
-      } catch (err) { toast(err.message); } finally { quickCaptureBusy = false; }
-    },
-  }, input);
-  if (state.focusQuickCapture) {
-    state.focusQuickCapture = false;
-    queueMicrotask(() => input.focus());
-  }
-  return form;
+      } catch (err) {
+        toast(err.message);
+        if (!input.value) input.value = title; // nicht verlieren, falls das Speichern scheiterte
+      }
+    });
+  });
 }
 
 async function triageInbox(t, patch) {
@@ -667,7 +665,6 @@ function homePage() {
     (!state.locs.size || state.locs.has(t.location)) &&
     (!state.assignees.size || state.assignees.has(t.assignee)));
   return h('div', {},
-    quickCaptureInput(),
     inboxSection(),
     h('div', { class: 'section' },
       sectionHeader('Anstehend', openCount, state.todoOpen, () => { state.todoOpen = !state.todoOpen; render(); }),
@@ -759,6 +756,7 @@ function render() {
   if (!state.cfg) return;
   // Der Auswahlmodus gehört nur zur Startseite – beim Wechsel auf eine andere Seite sauber beenden.
   if (route && state.selecting) { state.selecting = false; state.selected.clear(); }
+  $('#quickForm').hidden = !!route; // Schnellerfassung nur auf der Startseite
   if (route === 'debug') {
     renderDebugPage(view);
   } else {
@@ -987,6 +985,9 @@ function openForm(task) {
   const cat = h('select', {}, h('option', { value: '' }, '– keine –'), Object.keys(cfg.categories).map((c) => h('option', { value: c, selected: c === t.category }, c)));
   const loc = h('select', {}, h('option', { value: '' }, '– keiner –'), cfg.locations.map((l) => h('option', { value: l, selected: l === t.location }, l)));
   const prio = h('select', {}, cfg.priorities.map((p) => h('option', { value: p, selected: p === t.priority }, p)));
+  // Status = in welchem Bereich der Startseite der Task liegt (früher nur per Schnellknopf in der Zeile änderbar).
+  const bucketSel = h('select', {}, [['todo', 'Anstehend'], ['later', 'Später'], ['inbox', 'Inbox (noch einsortieren)']]
+    .map(([v, l]) => h('option', { value: v, selected: (t.bucket || 'todo') === v }, l)));
   const who = makeAssigneePicker(t.assignee);
   const notes = h('textarea', { rows: 3 }, t.notes || '');
   notes.value = t.notes || '';
@@ -1031,7 +1032,7 @@ function openForm(task) {
     const body = { title: title.value, due_date: date.value || null, due_time: date.value && time.value ? time.value : null,
       due_end_time: date.value && time.value && endTime.value ? endTime.value : null,
       category: cat.value || null, location: loc.value || null,
-      assignee: who.get(), priority: prio.value, color: picker.get(), notes: notes.value, checklist: chk.get(), recurrence };
+      assignee: who.get(), priority: prio.value, bucket: bucketSel.value, color: picker.get(), notes: notes.value, checklist: chk.get(), recurrence };
     // Bei einer Bearbeitung nur die tatsächlich geänderten Felder senden (siehe diffPatch); beim Neuanlegen
     // gibt es noch keine Vorversion, da geht das komplette Formular raus.
     const payload = task ? diffPatch(task, body) : body;
@@ -1062,7 +1063,8 @@ function openForm(task) {
     recOpts,
     h('div', { class: 'row2' }, field('Kategorie', cat), field('Ort', loc)),
     field('Zuständigkeit', who.el),
-    h('div', { class: 'row2' }, field('Priorität', prio), field('Farbe', picker.el)),
+    h('div', { class: 'row2' }, field('Priorität', prio), field('Status', bucketSel)),
+    field('Farbe', picker.el),
     field('Notizen', notes),
     field('Checkliste (Enter = nächster Punkt, mehrzeiligen Text einfügen = mehrere Punkte)', chk.el),
     err,
@@ -1255,6 +1257,7 @@ if ('serviceWorker' in navigator) {
 
 // --- Einrichtung: Google-Anmeldung, dann einmalig die ID des geteilten Kalenders ---
 function renderSetupScreen(title, lead, ...content) {
+  $('#quickForm').hidden = true;
   $('#view').replaceChildren(h('div', { class: 'step' },
     h('h1', {}, title), h('p', { class: 'lead' }, lead), ...content));
 }
@@ -1316,6 +1319,7 @@ async function boot() {
 }
 
 (async () => {
+  initQuickCapture();
   await Offline.init();
   Auth.onChange(() => { if (!Auth.isSignedIn()) renderSignIn(); });
   await boot();
