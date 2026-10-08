@@ -156,7 +156,7 @@
         // Gilt ebenso für die aus einem Kategoriewechsel abgeleitete Farbe und das Mitlöschen von Uhrzeit/Endzeit
         // beim Entfernen des Datums – sonst bliebe bei Google die alte Farbe bzw. Uhrzeit stehen.
         const patch = { ...args.patch };
-        for (const k of ['bucket', 'color', 'due_time', 'due_end_time']) {
+        for (const k of ['bucket', 'color', 'due_time', 'due_end_time', 'in_calendar']) {
           if (!(k in args.patch) && (task[k] ?? null) !== (before?.[k] ?? null)) patch[k] = task[k] ?? null;
         }
         await enqueue({ kind, op, taskId: args.id, patch, baseUpdatedAt: before?.updated_at });

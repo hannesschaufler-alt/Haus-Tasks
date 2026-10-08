@@ -181,3 +181,26 @@ test('newId liefert stets unterschiedliche, nichtleere Werte', () => {
   assert.strictEqual(ids.size, 50);
   for (const id of ids) assert.ok(typeof id === 'string' && id.length > 0);
 });
+
+test('Kalender-Haken: neue Tasks aus, mit Uhrzeit automatisch an, ohne Datum nie', () => {
+  assert.strictEqual(L.createTask([], { title: 'a', due_date: '2031-01-01' }, {}).task.in_calendar, false);
+  assert.strictEqual(L.createTask([], { title: 'b', due_date: '2031-01-01', due_time: '10:00' }, {}).task.in_calendar, true);
+  assert.strictEqual(L.createTask([], { title: 'c', due_date: '2031-01-01', in_calendar: true }, {}).task.in_calendar, true);
+  assert.strictEqual(L.createTask([], { title: 'd', in_calendar: true }, {}).task.in_calendar, false, 'ohne Datum nichts anzuzeigen');
+});
+
+test('Kalender-Haken: Uhrzeit setzen schaltet ein (außer ausdrücklich anders), Datum löschen schaltet aus', () => {
+  let { task, tasks } = L.createTask([], { title: 'a', due_date: '2031-01-01' }, {});
+  ({ task, tasks } = L.updateTask(tasks, task.id, { due_time: '09:00' }, {}));
+  assert.strictEqual(task.in_calendar, true);
+  ({ task, tasks } = L.updateTask(tasks, task.id, { in_calendar: false }, {}));
+  assert.strictEqual(task.in_calendar, false);
+  ({ task, tasks } = L.updateTask(tasks, task.id, { due_time: '10:00' }, {})); // Uhrzeit nur geändert, nicht neu gesetzt
+  assert.strictEqual(task.in_calendar, false);
+  ({ task, tasks } = L.updateTask(tasks, task.id, { due_time: null, due_date: '2031-02-01' }, {}));
+  ({ task, tasks } = L.updateTask(tasks, task.id, { due_time: '08:00', in_calendar: false }, {}));
+  assert.strictEqual(task.in_calendar, false, 'ausdrückliche Angabe gewinnt');
+  ({ task } = L.updateTask(tasks, task.id, { in_calendar: true }, {}));
+  ({ task } = L.updateTask([task], task.id, { due_date: null }, {}));
+  assert.strictEqual(task.in_calendar, false);
+});

@@ -124,6 +124,9 @@
   .select-bar { position: sticky; bottom: 12px; z-index: 6; display: flex; align-items: center; gap: 8px; margin-top: 12px;
     padding: 10px 12px; background: var(--card); border: 1px solid var(--accent); border-radius: var(--radius); box-shadow: 0 4px 16px rgba(0,0,0,.3); }
   .select-bar .count { flex: 1; font-weight: 600; font-size: 14px; }
+  .cal-check { flex-wrap: wrap; margin: 4px 0 10px; color: var(--text); }
+  .cal-check small { flex-basis: 100%; color: var(--muted); font-size: 12px; padding-left: 24px; }
+  .cal-mark { margin-left: 4px; font-size: 11px; opacity: .75; }
   .inline-check { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--muted); }
   .task.done .title { text-decoration: line-through; color: var(--muted); }
   /* Runde Checkbox statt eckigem Häkchen. width/height allein reichten nicht in jedem Browser (Grid-
@@ -344,7 +347,7 @@ function dateChip(t) {
   const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? ` ’${String(d.getFullYear()).slice(2)}` : '';
   const timeLabel = t.due_time && (t.due_end_time ? `${t.due_time}–${t.due_end_time}` : t.due_time);
   const label = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }).replace(/\.,\s*/, ' ') + yearSuffix + (timeLabel ? ` · ${timeLabel}` : '');
-  return h('span', { class: 'date-chip' + cls, title: fmtDate(t.due_date) + (timeLabel ? `, ${timeLabel} Uhr` : '') + ' – antippen zum Ändern', onclick: openPicker }, label, picker);
+  return h('span', { class: 'date-chip' + cls, title: fmtDate(t.due_date) + (timeLabel ? `, ${timeLabel} Uhr` : '') + (t.in_calendar ? ' · steht im Google-Kalender' : '') + ' – antippen zum Ändern', onclick: openPicker }, label, t.in_calendar && h('span', { class: 'cal-mark' }, '📅'), picker);
 }
 
 
@@ -480,6 +483,7 @@ function openBulkForm() {
   const who = h('select', {}, keepOpt('– unverändert –'), h('option', { value: '' }, 'Niemand'), ASSIGNEES.map((a) => h('option', { value: a }, a)));
   const prio = h('select', {}, keepOpt('– unverändert –'), cfg.priorities.map((p) => h('option', { value: p }, p)));
   const bucket = h('select', {}, keepOpt('– unverändert –'), h('option', { value: 'todo' }, 'To Do'), h('option', { value: 'later' }, 'Später'));
+  const inCal = h('select', {}, keepOpt('– unverändert –'), h('option', { value: 'yes' }, 'Ja, anzeigen (Tasks ohne Datum nicht)'), h('option', { value: 'no' }, 'Nein, nur in der App'));
   const err = h('div', { class: 'error' });
   const form = $('#form');
   const field = (label, ...ctl) => h('div', { class: 'field' }, h('label', {}, label), ...ctl);
@@ -495,6 +499,7 @@ function openBulkForm() {
     if (who.value !== KEEP) patch.assignee = who.value || null;
     if (prio.value !== KEEP) patch.priority = prio.value;
     if (bucket.value !== KEEP) patch.bucket = bucket.value;
+    if (inCal.value !== KEEP) patch.in_calendar = inCal.value === 'yes';
     if (!Object.keys(patch).length) { err.textContent = 'Nichts zum Ändern ausgewählt.'; return; }
     const { ok, errors } = await applyBulk(ids, patch);
     $('#dlg').close();
@@ -510,7 +515,7 @@ function openBulkForm() {
     field('Datum', date, h('label', { class: 'inline-check' }, clearDate, ' Datum entfernen')),
     h('div', { class: 'row2' }, field('Kategorie', cat), field('Ort', loc)),
     h('div', { class: 'row2' }, field('Zuständigkeit', who), field('Priorität', prio)),
-    field('Liste', bucket),
+    h('div', { class: 'row2' }, field('Liste', bucket), field('In Google Kalender', inCal)),
     err,
     h('div', { class: 'actions' },
       h('span'),
@@ -974,14 +979,20 @@ function openForm(task) {
   // Endzeit wiederum nur sinnvoll mit Startzeit – ohne eigene Angabe gilt eine Stunde als Vorgabe (siehe
   // eventBody()), muss hier also nicht zwingend ausgefüllt werden.
   const endTime = h('input', { type: 'time', value: t.due_end_time || '', disabled: !t.due_time, placeholder: '+1 Std.' });
+  // „In Google Kalender anzeigen“: nur dann steht der Task an seinem Datum im Google-Kalender, sonst wird er nur
+  // unsichtbar zwischen den Geräten abgeglichen. Eine Uhrzeit schaltet den Haken von selbst ein (ein Termin
+  // gehört in den Kalender); ohne Datum gibt es nichts anzuzeigen.
+  const inCal = h('input', { type: 'checkbox', id: 'optInCal', checked: t.in_calendar === undefined ? !!(t.due_date && t.due_time) : !!t.in_calendar, disabled: !t.due_date });
   const syncTimeFields = () => {
     time.disabled = !date.value;
     if (!date.value) time.value = '';
     endTime.disabled = !time.value;
     if (!time.value) endTime.value = '';
+    inCal.disabled = !date.value;
+    if (!date.value) inCal.checked = false;
   };
   date.addEventListener('change', syncTimeFields);
-  time.addEventListener('change', syncTimeFields);
+  time.addEventListener('change', () => { const had = !endTime.disabled; syncTimeFields(); if (time.value && !had) inCal.checked = true; });
   const cat = h('select', {}, h('option', { value: '' }, '– keine –'), Object.keys(cfg.categories).map((c) => h('option', { value: c, selected: c === t.category }, c)));
   const loc = h('select', {}, h('option', { value: '' }, '– keiner –'), cfg.locations.map((l) => h('option', { value: l, selected: l === t.location }, l)));
   const prio = h('select', {}, cfg.priorities.map((p) => h('option', { value: p, selected: p === t.priority }, p)));
@@ -1032,7 +1043,7 @@ function openForm(task) {
     const body = { title: title.value, due_date: date.value || null, due_time: date.value && time.value ? time.value : null,
       due_end_time: date.value && time.value && endTime.value ? endTime.value : null,
       category: cat.value || null, location: loc.value || null,
-      assignee: who.get(), priority: prio.value, bucket: bucketSel.value, color: picker.get(), notes: notes.value, checklist: chk.get(), recurrence };
+      assignee: who.get(), priority: prio.value, bucket: bucketSel.value, in_calendar: !!date.value && inCal.checked, color: picker.get(), notes: notes.value, checklist: chk.get(), recurrence };
     // Bei einer Bearbeitung nur die tatsächlich geänderten Felder senden (siehe diffPatch); beim Neuanlegen
     // gibt es noch keine Vorversion, da geht das komplette Formular raus.
     const payload = task ? diffPatch(task, body) : body;
@@ -1057,8 +1068,10 @@ function openForm(task) {
     h('h3', {}, task ? 'Task bearbeiten' : 'Neuer Task'),
     syncInfo,
     field('Titel', title),
-    h('div', { class: 'row2' }, field('Datum (leer = nur in der App)', date), field('Uhrzeit (optional)', time)),
+    h('div', { class: 'row2' }, field('Datum', date), field('Uhrzeit (optional)', time)),
     field('Ende (optional, sonst +1 Std.)', endTime),
+    h('label', { for: 'optInCal', class: 'inline-check cal-check' }, inCal, h('span', {}, 'In Google Kalender anzeigen'),
+      h('small', {}, 'Ohne Haken bleibt der Task nur in der App sichtbar und wird unsichtbar zwischen den Geräten abgeglichen.')),
     field('Wiederholung', recType),
     recOpts,
     h('div', { class: 'row2' }, field('Kategorie', cat), field('Ort', loc)),
@@ -1164,8 +1177,11 @@ async function syncNow(silent) {
       }
       if (!silent) {
         if (r.aborted) toast('Verbindung während der Übertragung verloren, der Rest folgt automatisch.');
-        else toast(`Sync fertig: ${r.pulled} übernommen, ${r.pushed} gesendet.`);
+        else toast(`Sync fertig: ${r.pulled} übernommen, ${r.pushed} gesendet${r.calUpdated ? `, ${r.calUpdated} aus dem Google-Kalender ausgeblendet` : ''}.`);
       }
+      // Die einmalige Umstellung auf den „unsichtbaren Sync“ läuft häppchenweise (siehe CAL_RECONCILE_LIMIT):
+      // war das Limit erreicht, gleich der nächste Durchgang, nicht erst nach 5 Minuten.
+      if (r.calUpdated >= 30 && !r.aborted) setTimeout(() => syncNow(true), 3000);
     } catch (e) {
       if (e.authRequired) {
         // Mitten in der Nutzung abgemeldet: nur ein Hinweis-Banner, die zwischengespeicherte Ansicht
@@ -1217,7 +1233,7 @@ async function openSettings() {
       h('h4', {}, 'Google-Kalender'),
       h('label', { for: 'optSlot', style: 'display:flex;gap:10px;align-items:flex-start;color:var(--text)' }, slot,
         h('span', {}, 'Tasks ohne Uhrzeit am Tagesende im Google-Kalender einsortieren')),
-      h('div', { class: 'hint' }, 'Tasks mit Datum, aber ohne Uhrzeit, erscheinen im Google-Kalender sonst als Ganztagstermin ganz oben und schieben deine normalen Termine nach unten. Mit dieser Option liegen sie als 25-Minuten-Termine am Ende des Tages (ohne Erinnerung): je 3 Tasks nebeneinander, bis zu 4 Reihen (ab 22:19 Uhr), damit die Titel lesbar bleiben. In der App bleibt es ein Task ohne Uhrzeit. Gilt für alle Geräte und stellt bestehende Tasks einmalig um.')),
+      h('div', { class: 'hint' }, 'Tasks mit Datum, aber ohne Uhrzeit, erscheinen im Google-Kalender sonst als Ganztagstermin ganz oben und schieben deine normalen Termine nach unten. Mit dieser Option liegen sie als 25-Minuten-Termine am Ende des Tages (ohne Erinnerung): je 3 Tasks nebeneinander, bis zu 4 Reihen (ab 22:19 Uhr), damit die Titel lesbar bleiben. In der App bleibt es ein Task ohne Uhrzeit. Gilt nur für Tasks mit Haken „In Google Kalender anzeigen“, für alle Geräte, und stellt bestehende Tasks einmalig um.')),
     h('div', { class: 'set-group' },
       h('h4', {}, 'Haushalt & Hilfe'),
       h('div', { class: 'set-row' },

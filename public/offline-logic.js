@@ -37,6 +37,9 @@
       assignee: ASSIGNEES.includes(input.assignee) ? input.assignee : null,
       priority: PRIORITIES.includes(input.priority) ? input.priority : 'mittel',
       bucket: BUCKETS.includes(input.bucket) ? input.bucket : 'todo',
+      // „In Google Kalender anzeigen“: aus, außer der Task hat eine Uhrzeit (ein Termin gehört in den Kalender).
+      // Ohne Datum gibt es nichts anzuzeigen. Siehe sync-core.js (HIDDEN_EPOCH).
+      in_calendar: !!input.due_date && (input.in_calendar === undefined ? !!input.due_time : !!input.in_calendar),
       color: input.color || (category && categories[category]) || '9',
       notes: String(input.notes ?? ''),
       checklist: Array.isArray(input.checklist) ? input.checklist : [],
@@ -71,6 +74,10 @@
     // mit weg. Ohne Startuhrzeit ergibt eine Endzeit ebenso nichts, und eine Endzeit vor/gleich der
     // Startzeit wird verworfen statt einen Termin mit negativer oder leerer Dauer zu erzeugen.
     if ('due_date' in patch && !patch.due_date && !('due_time' in patch)) next.due_time = null;
+    // Wird eine Uhrzeit neu gesetzt, schaltet sich der Kalender-Haken von selbst ein (außer der Aufruf sagt etwas
+    // anderes); ohne Datum fällt er mit weg.
+    if (patch.due_time && !cur.due_time && !('in_calendar' in patch)) next.in_calendar = true;
+    if (!next.due_date) next.in_calendar = false;
     if (!next.due_time) next.due_end_time = null;
     else if (next.due_end_time && next.due_end_time <= next.due_time) next.due_end_time = null;
     if ('recurrence' in patch) {
@@ -108,6 +115,8 @@
         next_task_id: null,
         google_event_id: null,
         google_updated: null,
+        hidden_date: null,
+        cal_migrate: false,
         deleted: false,
         created_at: ts,
         updated_at: ts,

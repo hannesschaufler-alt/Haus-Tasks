@@ -79,14 +79,36 @@
   // folgt automatisch beim nächsten Sync, so blockiert die einmalige Umstellung vieler Alt-Tasks nicht lange.
   const SLOT_RECONCILE_LIMIT = 40;
 
+  // „Unsichtbarer Sync“: Nur Tasks mit Häkchen „In Google Kalender anzeigen“ (`in_calendar`) erscheinen im
+  // Kalender an ihrem echten Datum. Alle anderen liegen als versteckter, privater Ganztagstermin an einem
+  // weit zurückliegenden Tag (1971–1980) – dort stört er niemanden, wird aber trotzdem zwischen allen Geräten
+  // synchronisiert. Das echte Datum (und die Uhrzeit) steht dann in versteckten Zusatzfeldern. Der Tag wird aus
+  // der Task-ID abgeleitet und über ~10 Jahre gestreut, damit nicht Hunderte Termine an einem einzigen Tag
+  // hängen (Google veröffentlicht zwar kein festes Tageslimit, aber so ist man auf der sicheren Seite).
+  // Einmal vergeben, bleibt der Tag stehen (`hidden_date`, wird aus dem Event gelesen), egal welches Gerät
+  // später schreibt – die Task-ID selbst kennen andere Geräte nämlich nicht (siehe applyRemoteEvent).
+  const HIDDEN_EPOCH = '1971-01-01';
+  const HIDDEN_DAYS = 3650;
+  const CAL_RECONCILE_LIMIT = 30; // wie SLOT_RECONCILE_LIMIT: Umstellung bestehender Tasks häppchenweise
+  const isHiddenDate = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= HIDDEN_EPOCH && d < '1982-01-01';
+  function hiddenDateFor(t) {
+    if (isHiddenDate(t.hidden_date)) return t.hidden_date;
+    let hash = 0;
+    for (const ch of String(t.id || t.title || '')) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+    return Recurrence.addDays(HIDDEN_EPOCH, hash % HIDDEN_DAYS);
+  }
+  // Steht der Task sichtbar im Kalender? Ohne Datum gibt es nichts anzuzeigen.
+  // Tasks aus einer Version ohne Schalter (in_calendar fehlt ganz) gelten wie beim Einlesen: nur mit Uhrzeit sichtbar.
+  const isVisible = (t) => !!(t.due_date && (t.in_calendar === undefined ? t.due_time : t.in_calendar));
+
   function resolveSettings(raw) {
     return { ...DEFAULT_SETTINGS, ...(raw && typeof raw === 'object' ? raw : {}) };
   }
 
-  // Bekommt der Task im Kalender einen Platz am Tagesende? Nur bei echtem Datum und ohne eigene Uhrzeit
-  // (Platzhalter-Termine für datumslose Tasks bleiben ganztägig und unsichtbar auf 1970).
+  // Bekommt der Task im Kalender einen Platz am Tagesende? Nur bei sichtbaren Tasks mit echtem Datum und ohne
+  // eigene Uhrzeit (alles Versteckte liegt ganztägig auf einem alten Tag).
   function usesTimeSlot(t, opts) {
-    return !!(opts && opts.untimedAtEndOfDay && t.due_date && !t.due_time);
+    return !!(opts && opts.untimedAtEndOfDay && isVisible(t) && !t.due_time);
   }
 
   // Legt (falls noch keiner da ist) den Platz fest: der erste Platz mit weniger als SLOT_PER_ROW Tasks an diesem
@@ -115,12 +137,13 @@
     // sieht Google Kalender selbst nur einen normalen Termin, aber jede Haus-Tasks-Installation kann die
     // Zusatzinfos wieder auslesen. „private“ heißt hier: nur für diese App sichtbar, nicht personenbezogen.
     const initial = t.assignee && ASSIGNEE_INITIAL[t.assignee];
-    const due = t.due_date || NO_DATE_PLACEHOLDER;
+    const visible = isVisible(t);
+    const due = visible ? t.due_date : hiddenDateFor(t);
     // Beim Wechsel zwischen "ganztägig" (date) und "mit Uhrzeit" (dateTime) muss die jeweils andere
     // Darstellung explizit auf null gesetzt werden, nicht nur weggelassen: Google lässt sie sonst von
     // einer vorherigen Version des Termins stehen und lehnt die dann widersprüchliche Kombination ab
     // ("Invalid start time"). Ohne eigene Endzeit gilt eine Stunde Dauer als Vorgabe.
-    const hasTime = !!(t.due_date && t.due_time);
+    const hasTime = visible && !!t.due_time;
     const slot = usesTimeSlot(t, opts);
     const tz = opts.timeZone || TIME_ZONE;
     let start, end;
@@ -143,7 +166,7 @@
       start, end,
       colorId: t.done ? DONE_COLOR : t.color,
       transparency: 'transparent', // blockiert die Verfügbarkeit nicht
-      visibility: t.due_date ? 'default' : 'private', // Platzhalter-Termin möglichst unauffällig
+      visibility: visible ? 'default' : 'private', // versteckter Termin möglichst unauffällig
       extendedProperties: {
         private: {
           category: t.category || '',
@@ -155,7 +178,11 @@
           recurrence: t.recurrence ? JSON.stringify(t.recurrence) : '',
           series_id: t.series_id || '',
           color: t.color || '', // die „echte“ Farbe, damit sie nach einem Erledigt/Grau-Zyklus wiederhergestellt werden kann
-          noDate: t.due_date ? '' : 'true', // Platzhalterdatum, kein echtes Fälligkeitsdatum
+          noDate: '', // veraltet (früher: Platzhalter 1970 für datumslose Tasks), ersetzt durch cal/due
+          cal: visible ? 'show' : 'hide', // „show“ = Termin liegt am echten Datum, „hide“ = versteckt auf einem alten Tag
+          due: visible ? '' : (t.due_date || ''), // echtes Datum, solange der Termin versteckt ist
+          dueTime: !visible && t.due_date && t.due_time ? t.due_time : '',
+          dueEnd: !visible && t.due_date && t.due_time && t.due_end_time ? t.due_end_time : '',
           noTime: slot ? 'true' : '', // Platz am Tagesende statt echter Uhrzeit (siehe usesTimeSlot)
           slot: slot && Number.isInteger(t.slot_index) ? String(t.slot_index) : '', // welcher Platz (siehe withSlotIndex)
           bucket: t.bucket || '', // GTD-Status (inbox/todo/later), siehe offline-logic.js
@@ -165,8 +192,8 @@
     // Ein Termin mit Uhrzeit bekäme sonst die Standard-Benachrichtigung des Kalenders (also um ~23:30 für jeden
     // Task) – für den Platzhalter ausdrücklich abschalten. Beim Zurückstellen auf ganztägig wieder auf die
     // Standardeinstellung des Kalenders setzen; sonst (kein Wechsel) bleibt `reminders` unangetastet.
-    if (slot) body.reminders = { useDefault: false, overrides: [] };
-    else if (t.time_slot) body.reminders = { useDefault: true };
+    if (slot || !visible) body.reminders = { useDefault: false, overrides: [] };
+    else body.reminders = { useDefault: true };
     return body;
   }
 
@@ -195,6 +222,21 @@
     // draufgesetzt hat. Der Datumsanteil ist so oder so brauchbar, einfach daraus nehmen – ohne diesen
     // Rückfall würde ein Merge das Datum sonst auf den Platzhalter zurücksetzen, nicht nur den Patch ablehnen.
     const startDate = ev.start?.date || (ev.start?.dateTime ? ev.start.dateTime.slice(0, 10) : null);
+    const own = 'priority' in p;
+    // Versteckter Termin (siehe HIDDEN_EPOCH): echtes Datum/Uhrzeit stehen in den Zusatzfeldern, der Termin selbst
+    // liegt auf einem alten Tag, den wir uns merken, damit er beim nächsten Schreiben nicht umzieht.
+    if (p.cal === 'hide') {
+      const due_date = p.due || null;
+      const due_time = due_date && p.dueTime ? p.dueTime : null;
+      return {
+        title, due_date, due_time, due_end_time: due_time && p.dueEnd ? p.dueEnd : null,
+        time_slot: false, slot_index: null, done, color,
+        category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
+        notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
+        bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo',
+        in_calendar: false, cal_migrate: false, hidden_date: isHiddenDate(startDate) ? startDate : null,
+      };
+    }
     const due_date = p.noDate === 'true' ? null : (startDate || null);
     // Ein Platz am Tagesende (siehe usesTimeSlot) zählt als „keine Uhrzeit“. Der Marker allein reicht nicht – ohne
     // dateTime (z. B. wieder auf ganztägig gestellt) ist der Termin kein Platzhalter mehr. Ältere Termine
@@ -205,12 +247,23 @@
     // Nur übernehmen, wenn die Endzeit auf denselben Tag fällt – ein über Mitternacht gehender Termin
     // wird (wie beim Anlegen, siehe eventBody()) nicht unterstützt, dann lieber die Vorgabe (eine Stunde).
     const due_end_time = due_time && ev.end?.dateTime && ev.end.dateTime.slice(0, 10) === due_date ? ev.end.dateTime.slice(11, 16) : null;
+    // Sichtbar im Kalender: mit Marker „show“ sicher; ohne Marker (Termin aus einer Version vor dem Schalter oder
+    // direkt in Google angelegt) gilt: eigene Tasks nur mit echter Uhrzeit, fremde Termine immer. Eigene
+    // Alt-Termine, die nach dieser Regel unsichtbar werden sollen, bekommen `cal_migrate` und werden beim
+    // nächsten Sync (reconcileCalendar) auf einen alten Tag verschoben.
+    const in_calendar = !!due_date && (p.cal === 'show' ? true : own ? !!due_time : true);
     return {
       title, due_date, due_time, due_end_time, time_slot, slot_index, done, color,
       category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
       notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
       bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo',
+      in_calendar, cal_migrate: own && p.cal !== 'show' && !in_calendar, hidden_date: null,
     };
+  }
+
+  // Lokale Zusatzfelder, nachdem ein Event mit diesem Stand geschrieben wurde.
+  function writtenFields(t, opts) {
+    return { time_slot: usesTimeSlot(t, opts), slot_index: t.slot_index ?? null, in_calendar: isVisible(t), cal_migrate: false, hidden_date: isVisible(t) ? null : hiddenDateFor(t) };
   }
 
   function findByEvent(tasks, eventId) {
@@ -359,7 +412,7 @@
         if (!task.google_event_id) {
           const slotted = withSlotIndex(tasks, { ...task, slot_index: null }, opts);
           const ev = await remote.insert(eventBody(slotted, opts));
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, time_slot: usesTimeSlot(slotted, opts), slot_index: slotted.slot_index } : t));
+          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, ...writtenFields(slotted, opts) } : t));
           await store.saveRawTasks(tasks);
           sent.push(entry);
           await store.removeOutboxEntry(entry.seq);
@@ -382,7 +435,7 @@
         if (!freshEvent) {
           const slotted = withSlotIndex(tasks, { ...task, slot_index: null }, opts);
           const ev = await remote.insert(eventBody(slotted, opts)); // neu anlegen, mit dem vollen lokalen Stand
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, time_slot: usesTimeSlot(slotted, opts), slot_index: slotted.slot_index } : t));
+          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, ...writtenFields(slotted, opts) } : t));
           await store.saveRawTasks(tasks);
           sent.push(entry);
           await store.removeOutboxEntry(entry.seq);
@@ -395,11 +448,10 @@
         const freshShape = taskShapeFromEvent(freshEvent);
         let merged = { ...freshShape, ...entry.patch };
         // Anderer Tag (oder Platz fehlt noch): Platz neu vergeben, am neuen Tag kann der alte schon voll sein.
-        if (merged.due_date !== freshShape.due_date) merged = { ...merged, slot_index: null };
-        merged = withSlotIndex(tasks, { ...merged, id: task.id }, opts);
-        delete merged.id;
+        if (merged.due_date !== freshShape.due_date || !!merged.in_calendar !== !!freshShape.in_calendar) merged = { ...merged, slot_index: null };
+        merged = withSlotIndex(tasks, { ...merged, id: task.id }, opts); // id bleibt dran: der versteckte Tag wird daraus abgeleitet
         const ev = await remote.patch(task.google_event_id, eventBody(merged, opts));
-        tasks = tasks.map((t) => (t.id === task.id ? { ...t, ...merged, google_event_id: ev.id, google_updated: ev.updated, time_slot: usesTimeSlot(merged, opts) } : t));
+        tasks = tasks.map((t) => (t.id === task.id ? { ...t, ...merged, google_event_id: ev.id, google_updated: ev.updated, ...writtenFields(merged, opts) } : t));
         await store.saveRawTasks(tasks);
         sent.push(entry);
         await store.removeOutboxEntry(entry.seq);
@@ -450,7 +502,7 @@
     const enabled = !!opts.untimedAtEndOfDay;
     // Umzustellen sind Tasks, deren Event nicht zur Einstellung passt – und bei „an“ auch ältere Platzhalter ohne
     // Platznummer (23:58–23:59 aus einer früheren Version), die jetzt einen richtigen Platz bekommen.
-    const candidates = tasks.filter((t) => t.google_event_id && !t.deleted && t.due_date && !t.due_time && !dirtyIds.has(t.id)
+    const candidates = tasks.filter((t) => t.google_event_id && !t.deleted && t.in_calendar && t.due_date && !t.due_time && !t.cal_migrate && !dirtyIds.has(t.id)
       && (!!t.time_slot !== enabled || (enabled && t.time_slot && !Number.isInteger(t.slot_index)))
       && t.slot_failed !== enabled);
     let updated = 0;
@@ -458,12 +510,11 @@
       try {
         const fresh = await remote.get(task.google_event_id);
         let merged = taskShapeFromEvent(fresh);
-        if (merged.due_time || !merged.due_date) continue; // inzwischen ein Termin mit echter Uhrzeit bzw. ohne Datum: nichts umzustellen
+        if (merged.due_time || !merged.due_date || !merged.in_calendar) continue; // inzwischen ein Termin mit echter Uhrzeit bzw. ohne Datum: nichts umzustellen
         // `tasks` wird nach jedem Task fortgeschrieben, so sieht der nächste die schon vergebenen Plätze.
         merged = { ...withSlotIndex(tasks, { ...merged, id: task.id }, opts) };
-        delete merged.id;
         const ev = await remote.patch(task.google_event_id, eventBody(merged, opts));
-        tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_updated: ev.updated, time_slot: usesTimeSlot(merged, opts), slot_index: merged.slot_index, slot_failed: undefined } : t));
+        tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_updated: ev.updated, ...writtenFields(merged, opts), slot_failed: undefined } : t));
         await store.saveRawTasks(tasks);
         updated++;
       } catch (e) {
@@ -481,6 +532,52 @@
     return updated;
   }
 
+  // Stellt Tasks, deren Google-Event noch die alte Darstellung hat (ohne Marker `cal`), auf den „unsichtbaren Sync“
+  // um: Alt-Tasks ohne Uhrzeit wandern auf einen alten Tag, Tasks mit Uhrzeit bleiben, wo sie sind (siehe
+  // taskShapeFromEvent). Gleiche Technik wie reconcileTimeSlots(): nach pull/push, ohne wartende Änderungen,
+  // aktueller Google-Stand vor dem Patch, häppchenweise (CAL_RECONCILE_LIMIT), Fehler brechen den Sync nicht ab.
+  async function reconcileCalendar(store, remote, opts, dirtyIds) {
+    let tasks = await store.getRawTasks();
+    // Lokale Tasks aus einer Version ohne Schalter kennen `in_calendar` noch nicht: wie beim Einlesen der Events
+    // ableiten (nur Tasks mit Uhrzeit bleiben sichtbar) und die Event-Umstellung vormerken.
+    if (tasks.some((t) => t.in_calendar === undefined)) {
+      tasks = tasks.map((t) => {
+        if (t.in_calendar !== undefined) return t;
+        const in_calendar = !!(t.due_date && t.due_time);
+        return { ...t, in_calendar, cal_migrate: !!t.google_event_id && !in_calendar };
+      });
+      await store.saveRawTasks(tasks);
+    }
+    const candidates = tasks.filter((t) => t.cal_migrate && t.google_event_id && !t.deleted && !dirtyIds.has(t.id) && !t.cal_failed);
+    let updated = 0;
+    for (const task of candidates.slice(0, CAL_RECONCILE_LIMIT)) {
+      try {
+        const fresh = await remote.get(task.google_event_id);
+        const shape = taskShapeFromEvent(fresh);
+        if (shape.cal_migrate) {
+          const merged = { ...shape, id: task.id };
+          const ev = await remote.patch(task.google_event_id, eventBody(merged, opts));
+          tasks = tasks.map((t) => (t.id === task.id ? { ...t, ...merged, google_updated: ev.updated, ...writtenFields(merged, opts) } : t));
+          updated++;
+        } else {
+          // Hat inzwischen ein anderes Gerät umgestellt: nur den Stand übernehmen.
+          tasks = tasks.map((t) => (t.id === task.id ? { ...t, in_calendar: shape.in_calendar, cal_migrate: false, hidden_date: shape.hidden_date } : t));
+        }
+        await store.saveRawTasks(tasks);
+      } catch (e) {
+        const status = httpStatus(e);
+        if (isGone(e)) continue;
+        if (status >= 400 && status < 500 && status !== 429) {
+          tasks = tasks.map((t) => (t.id === task.id ? { ...t, cal_failed: true } : t)); // dauerhaft abgelehnt: nicht ständig neu versuchen
+          await store.saveRawTasks(tasks);
+          continue;
+        }
+        break; // Netzwerkproblem, Limit (429) o. Ä.: Rest beim nächsten Sync
+      }
+    }
+    return updated;
+  }
+
   async function syncWith(store, remote) {
     const timeZone = (await remote.getTimeZone?.().catch(() => null)) || TIME_ZONE;
     const optsFor = async () => ({ ...resolveSettings((await store.getConfig())?.settings), timeZone });
@@ -493,9 +590,10 @@
     // Danach erst die Umstellung auf die (ggf. gerade von einem anderen Gerät geänderte) Einstellung: so gilt
     // eine umgeschaltete Einstellung noch im selben Durchlauf, ohne dass die Reihenfolge Pull/Push/Konfiguration
     // sich ändert. Was push() mit dem älteren Stand gesendet hat, gleicht die Umstellung bei Bedarf gleich aus.
+    const calUpdated = aborted ? 0 : await reconcileCalendar(store, remote, await optsFor(), new Set((await store.getOutbox()).map((e) => e.taskId))).catch(() => 0);
     const slotsUpdated = aborted ? 0 : await reconcileTimeSlots(store, remote, await optsFor(), new Set((await store.getOutbox()).map((e) => e.taskId))).catch(() => 0);
-    return { pulled, pushed: sent.length, failed, clashes, aborted, abortReason, slotsUpdated };
+    return { pulled, pushed: sent.length, failed, clashes, aborted, abortReason, slotsUpdated, calUpdated };
   }
 
-  return { syncWith, pull, push, syncConfig, reconcileTimeSlots, eventBody, taskShapeFromEvent, usesTimeSlot, withSlotIndex, slotTimes, resolveSettings, DEFAULT_SETTINGS, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
+  return { syncWith, pull, push, syncConfig, reconcileTimeSlots, reconcileCalendar, hiddenDateFor, eventBody, taskShapeFromEvent, usesTimeSlot, withSlotIndex, slotTimes, resolveSettings, DEFAULT_SETTINGS, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
 });

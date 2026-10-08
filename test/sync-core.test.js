@@ -84,6 +84,9 @@ function fakeStore(settings) {
 const OfflineLogic = require('../public/offline-logic');
 async function createLocal(store, input, categories = {}) {
   const raw = await store.getRawTasks();
+  // Die meisten Tests prüfen, wie sichtbare Kalendertermine aussehen: ohne ausdrückliche Angabe gilt hier der
+  // Haken „In Google Kalender anzeigen“ als gesetzt (die echte App-Vorgabe testen die Tests weiter unten).
+  input = { in_calendar: true, ...input };
   const { task, tasks } = OfflineLogic.createTask(raw, input, categories);
   await store.saveRawTasks(tasks);
   await store.enqueue('create', task.id, input);
@@ -97,7 +100,7 @@ async function updateLocal(store, id, patch, categories = {}) {
   // Wie Offline.mutate() im Browser: Nebeneffekte von updateTask() (z. B. automatische Später→To-Do-
   // Beförderung beim Setzen eines Datums) müssen mit in den Sync, auch wenn sie nicht im Patch standen.
   const sentPatch = { ...patch };
-  for (const k of ['bucket', 'color', 'due_time', 'due_end_time']) {
+  for (const k of ['bucket', 'color', 'due_time', 'due_end_time', 'in_calendar']) {
     if (!(k in patch) && (task[k] ?? null) !== (before[k] ?? null)) sentPatch[k] = task[k] ?? null;
   }
   await store.enqueue('update', id, sentPatch, before.updated_at);
@@ -133,6 +136,7 @@ async function deleteLocal(store, id) {
 const taskEvents = () => remote.active().filter((e) => e.extendedProperties?.private?.appMarker !== S.CONFIG_MARKER);
 const findByTitle = (list, title) => list.find((t) => t.title === title);
 let remote;
+const HIDDEN_DAY = /^(197[1-9]|198[01])-[0-9]{2}-[0-9]{2}$/; // versteckte Termine liegen irgendwo in den 1970ern (siehe HIDDEN_EPOCH)
 test.beforeEach(() => { remote = fakeRemote(); });
 
 test('Task mit Datum wird als ganztägiges Event mit versteckten Zusatzfeldern angelegt', async () => {
@@ -234,25 +238,38 @@ test('Task ohne Datum synct trotzdem (versteckter Platzhalter-Termin), Datum set
   // da es keinen zentralen Server mehr gibt, der ihn für andere Geräte vorhält.
   assert.strictEqual(taskEvents().length, 1);
   let ev = taskEvents()[0];
-  assert.strictEqual(ev.start.date, '1970-01-01');
-  assert.strictEqual(ev.extendedProperties.private.noDate, 'true');
+  assert.match(ev.start.date, HIDDEN_DAY);
+  assert.strictEqual(ev.extendedProperties.private.cal, 'hide');
   assert.strictEqual(ev.visibility, 'private');
   const sameEventId = ev.id;
 
+  // Mit Datum, aber ohne Haken, bleibt der Termin versteckt auf demselben alten Tag; das echte Datum steht in einem Zusatzfeld.
+  const hiddenDay = ev.start.date;
   await updateLocal(store, t.id, { due_date: '2031-04-01' });
   await S.syncWith(store, remote);
   ev = taskEvents()[0];
   assert.strictEqual(taskEvents().length, 1);
-  assert.strictEqual(ev.id, sameEventId); // dasselbe Event wird nur umdatiert, nicht neu angelegt
-  assert.strictEqual(ev.start.date, '2031-04-01');
-  assert.strictEqual(ev.extendedProperties.private.noDate, '');
+  assert.strictEqual(ev.id, sameEventId); // dasselbe Event wird nur umgeschrieben, nicht neu angelegt
+  assert.strictEqual(ev.start.date, hiddenDay);
+  assert.strictEqual(ev.extendedProperties.private.due, '2031-04-01');
 
+  // Haken gesetzt: der Termin zieht an sein echtes Datum.
+  await updateLocal(store, t.id, { in_calendar: true });
+  await S.syncWith(store, remote);
+  ev = taskEvents()[0];
+  assert.strictEqual(ev.id, sameEventId);
+  assert.strictEqual(ev.start.date, '2031-04-01');
+  assert.strictEqual(ev.visibility, 'default');
+  assert.strictEqual(ev.extendedProperties.private.cal, 'show');
+  assert.strictEqual(ev.extendedProperties.private.due, '');
+
+  // Datum entfernt: Haken fällt mit weg, Termin geht wieder auf den alten Tag (derselbe wie vorher).
   await updateLocal(store, t.id, { due_date: null });
   await S.syncWith(store, remote);
   ev = taskEvents()[0];
   assert.strictEqual(ev.id, sameEventId);
-  assert.strictEqual(ev.start.date, '1970-01-01');
-  assert.strictEqual(ev.extendedProperties.private.noDate, 'true');
+  assert.strictEqual(ev.start.date, hiddenDay);
+  assert.strictEqual(ev.extendedProperties.private.due, '');
 });
 
 test('Bucket (GTD-Status) synct zwischen Geräten, Events ohne das Feld gelten als "todo"', async () => {
@@ -285,17 +302,17 @@ test('Abhaken eines datumslosen Tasks macht aus dem versteckten Platzhalter-Term
   await doneLocal(store, t.id, true);
   await S.syncWith(store, remote);
   let ev = remote.active()[0];
-  assert.strictEqual(ev.start.date, today);
-  assert.strictEqual(ev.visibility, 'default'); // jetzt ein normaler, sichtbarer Termin
-  assert.strictEqual(ev.extendedProperties.private.noDate, '');
+  // Das heutige Datum wird dem Task zugewiesen, im Kalender bleibt er aber unsichtbar (kein Haken).
+  assert.match(ev.start.date, HIDDEN_DAY);
+  assert.strictEqual(ev.extendedProperties.private.due, today);
   assert.match(ev.summary, /^✓ /);
 
   // Rückgängig machen lässt das Datum bewusst stehen (keine automatische Rückstellung).
   await doneLocal(store, t.id, false);
   await S.syncWith(store, remote);
   ev = remote.active()[0];
-  assert.strictEqual(ev.start.date, today);
-  assert.strictEqual(ev.visibility, 'default');
+  assert.strictEqual(ev.extendedProperties.private.due, today);
+  assert.strictEqual(ev.visibility, 'private');
 });
 
 test('ZWEITES GERÄT übernimmt einen datumslosen Task korrekt (kein Platzhalterdatum sichtbar)', async () => {
@@ -589,10 +606,10 @@ test('Echte Uhrzeit bleibt unverändert (kein Platzhalter, Erinnerungen unberüh
   const timed = taskEvents().find((e) => e.summary === 'Handwerker');
   assert.strictEqual(timed.start.dateTime, '2031-03-10T10:00:00');
   assert.strictEqual(timed.extendedProperties.private.noTime, '');
-  assert.strictEqual('reminders' in timed, false);
+  assert.deepStrictEqual(timed.reminders, { useDefault: true });
   const undated = taskEvents().find((e) => e.summary === 'Irgendwann');
-  assert.strictEqual(undated.start.date, '1970-01-01');
-  assert.strictEqual('reminders' in undated, false);
+  assert.match(undated.start.date, HIDDEN_DAY);
+  assert.deepStrictEqual(undated.reminders, { useDefault: false, overrides: [] });
 });
 
 test('Uhrzeit entfernen / wieder setzen: Task fällt auf den Platzhalter zurück bzw. bekommt eine echte Uhrzeit', async () => {
@@ -656,7 +673,7 @@ test('Einstellung AN: bestehende Ganztags-Tasks (auch erledigte) werden einmalig
   assert.strictEqual(byTitle('Erledigt').start.dateTime, '2031-03-11T23:34:00');
   assert.ok(byTitle('Erledigt').summary.startsWith('✓'), 'erledigt bleibt erledigt');
   assert.strictEqual(byTitle('Echt').start.dateTime, '2031-03-12T08:00:00');
-  assert.strictEqual(byTitle('Ohne Datum').start.date, '1970-01-01');
+  assert.match(byTitle('Ohne Datum').start.date, HIDDEN_DAY);
 
   assert.strictEqual((await S.syncWith(store, remote)).slotsUpdated, 0, 'idempotent');
 });
@@ -812,7 +829,7 @@ test('Datum ändern: am neuen Tag wird der Platz neu vergeben (der alte kann dor
 test('Bereits angelegte 23:58-Platzhalter (frühere Version, ohne Platznummer) werden beim Abgleich auf richtige Plätze verteilt', async () => {
   const opts = { untimedAtEndOfDay: true, timeZone: 'Europe/Vienna' };
   for (let i = 0; i < 4; i++) {
-    const body = S.eventBody({ title: `Alt ${i}`, due_date: '2031-03-10', priority: 'mittel', color: '9' }, opts);
+    const body = S.eventBody({ title: `Alt ${i}`, due_date: '2031-03-10', in_calendar: true, priority: 'mittel', color: '9' }, opts);
     body.start = { dateTime: '2031-03-10T23:58:00', timeZone: 'Europe/Vienna' };
     body.end = { dateTime: '2031-03-10T23:59:00', timeZone: 'Europe/Vienna' };
     body.extendedProperties.private.slot = '';
@@ -823,4 +840,141 @@ test('Bereits angelegte 23:58-Platzhalter (frühere Version, ohne Platznummer) w
   assert.strictEqual(r.slotsUpdated, 4);
   assert.deepStrictEqual(slotCounts(), { '23:34': 3, '23:09': 1 });
   assert.strictEqual((await S.syncWith(store, remote)).slotsUpdated, 0, 'danach nichts mehr zu tun');
+});
+
+const evByTitle = (title) => taskEvents().find((e) => e.summary === title);
+// --- „Unsichtbarer Sync“: nur Tasks mit Haken „In Google Kalender anzeigen“ stehen an ihrem Datum im Kalender ---
+
+test('Neuer Task: Haken standardmäßig aus (Termin versteckt auf altem Tag), mit Uhrzeit automatisch an', async () => {
+  const store = fakeStore();
+  await createLocal(store, { title: 'Nur zum Merken', due_date: '2031-05-01', in_calendar: undefined });
+  await createLocal(store, { title: 'Arzt', due_date: '2031-05-02', due_time: '09:00', in_calendar: undefined });
+  await S.syncWith(store, remote);
+  const hidden = evByTitle('Nur zum Merken');
+  assert.match(hidden.start.date, HIDDEN_DAY);
+  assert.strictEqual(hidden.extendedProperties.private.due, '2031-05-01');
+  assert.strictEqual(hidden.visibility, 'private');
+  assert.deepStrictEqual(hidden.reminders, { useDefault: false, overrides: [] });
+  const shown = evByTitle('Arzt');
+  assert.strictEqual(shown.start.dateTime, '2031-05-02T09:00:00');
+  assert.strictEqual(shown.extendedProperties.private.cal, 'show');
+});
+
+test('Versteckter Task kommt mit echtem Datum und Uhrzeit auf dem zweiten Gerät an; Bearbeiten dort lässt den Termin auf seinem Tag', async () => {
+  const a = fakeStore();
+  const b = fakeStore();
+  await createLocal(a, { title: 'Müll rausbringen', due_date: '2031-05-01', due_time: '07:30', in_calendar: false, notes: 'Tonne' });
+  await S.syncWith(a, remote);
+  const day = taskEvents()[0].start.date;
+  await S.syncWith(b, remote);
+  const onB = (await b.getRawTasks())[0];
+  assert.strictEqual(onB.due_date, '2031-05-01');
+  assert.strictEqual(onB.due_time, '07:30');
+  assert.strictEqual(onB.in_calendar, false);
+  assert.strictEqual(onB.hidden_date, day);
+
+  await updateLocal(b, onB.id, { title: 'Müll und Papier' });
+  await S.syncWith(b, remote);
+  const ev = taskEvents()[0];
+  assert.strictEqual(ev.start.date, day, 'Tag bleibt, obwohl Gerät B die ursprüngliche Task-ID nicht kennt');
+  assert.strictEqual(ev.extendedProperties.private.due, '2031-05-01');
+  assert.strictEqual(ev.extendedProperties.private.dueTime, '07:30');
+  await S.syncWith(a, remote);
+  assert.strictEqual((await a.getRawTasks())[0].title, 'Müll und Papier');
+  assert.strictEqual((await a.getRawTasks())[0].due_time, '07:30');
+});
+
+test('Haken an/aus: Termin wechselt zwischen echtem Datum und verstecktem Tag, Uhrzeit bleibt erhalten', async () => {
+  const store = fakeStore();
+  const t = await createLocal(store, { title: 'Zahnarzt', due_date: '2031-06-10', due_time: '14:00', in_calendar: true });
+  await S.syncWith(store, remote);
+  assert.strictEqual(taskEvents()[0].start.dateTime, '2031-06-10T14:00:00');
+  await updateLocal(store, t.id, { in_calendar: false });
+  await S.syncWith(store, remote);
+  let ev = taskEvents()[0];
+  assert.match(ev.start.date, HIDDEN_DAY);
+  assert.strictEqual(ev.start.dateTime, null);
+  await updateLocal(store, t.id, { in_calendar: true });
+  await S.syncWith(store, remote);
+  ev = taskEvents()[0];
+  assert.strictEqual(ev.start.dateTime, '2031-06-10T14:00:00');
+  assert.strictEqual(ev.start.date, null);
+  assert.strictEqual((await store.getRawTasks())[0].due_time, '14:00');
+});
+
+test('Versteckte Tage verteilen sich über viele Tage (nicht alle Tasks an einem Tag)', () => {
+  const days = new Set();
+  for (let i = 0; i < 300; i++) days.add(S.hiddenDateFor({ id: `task-${i}-${i * 7919}` }));
+  assert.ok(days.size > 250, `nur ${days.size} verschiedene Tage für 300 Tasks`);
+  for (const d of days) assert.match(d, HIDDEN_DAY);
+  assert.strictEqual(S.hiddenDateFor({ id: 'x' }), S.hiddenDateFor({ id: 'x' }), 'stabil');
+  assert.strictEqual(S.hiddenDateFor({ id: 'x', hidden_date: '1975-05-05' }), '1975-05-05', 'gemerkter Tag hat Vorrang');
+});
+
+test('Umstellung bestehender Tasks: nur Termine mit Uhrzeit bleiben sichtbar, der Rest wandert auf alte Tage; Fremdtermine bleiben', async () => {
+  const legacy = (extra, priv) => remote.insert({ colorId: '9', start: { date: '2031-03-10' }, end: { date: '2031-03-11' }, ...extra,
+    extendedProperties: { private: { priority: 'mittel', category: 'Haushalt', noDate: '', noTime: '', ...priv } } });
+  await legacy({ summary: 'Ganztags alt' });
+  await legacy({ summary: 'Platz alt', start: { dateTime: '2031-03-10T23:34:00', timeZone: 'Europe/Vienna' }, end: { dateTime: '2031-03-10T23:59:00', timeZone: 'Europe/Vienna' } }, { noTime: 'true', slot: '0' });
+  await legacy({ summary: 'Mit Uhrzeit alt', start: { dateTime: '2031-03-10T10:00:00', timeZone: 'Europe/Vienna' }, end: { dateTime: '2031-03-10T11:00:00', timeZone: 'Europe/Vienna' } });
+  await legacy({ summary: 'Undatiert alt', start: { date: '1970-01-01' }, end: { date: '1970-01-02' } }, { noDate: 'true' });
+  await remote.insert({ summary: 'Von Hand in Google', start: { date: '2031-03-12' }, end: { date: '2031-03-13' } });
+
+  const store = fakeStore();
+  const r = await S.syncWith(store, remote);
+  assert.strictEqual(r.calUpdated, 3);
+  const ev = (title) => evByTitle(title);
+  assert.match(ev('Ganztags alt').start.date, HIDDEN_DAY);
+  assert.strictEqual(ev('Ganztags alt').extendedProperties.private.due, '2031-03-10');
+  assert.strictEqual(ev('Ganztags alt').extendedProperties.private.category, 'Haushalt', 'versteckte Felder bleiben');
+  assert.match(ev('Platz alt').start.date, HIDDEN_DAY);
+  assert.strictEqual(ev('Platz alt').start.dateTime, null);
+  assert.match(ev('Undatiert alt').start.date, HIDDEN_DAY);
+  assert.strictEqual(ev('Mit Uhrzeit alt').start.dateTime, '2031-03-10T10:00:00', 'Termin mit Uhrzeit bleibt sichtbar');
+  assert.strictEqual(ev('Von Hand in Google').start.dateTime.slice(0, 10), '2031-03-12', 'fremder Termin bleibt an seinem Tag (nur Platz am Tagesende wie bisher)');
+
+  const tasks = await store.getRawTasks();
+  const by = (title) => tasks.find((t) => t.title === title);
+  assert.strictEqual(by('Ganztags alt').due_date, '2031-03-10');
+  assert.strictEqual(by('Ganztags alt').in_calendar, false);
+  assert.strictEqual(by('Mit Uhrzeit alt').in_calendar, true);
+  assert.strictEqual(by('Von Hand in Google').in_calendar, true);
+  assert.strictEqual(by('Undatiert alt').due_date, null);
+
+  const again = await S.syncWith(store, remote);
+  assert.strictEqual(again.calUpdated, 0, 'idempotent');
+  assert.strictEqual(again.slotsUpdated, 0, 'die Tagesende-Umstellung fasst Versteckte nicht an');
+});
+
+test('Umstellung ist gedrosselt (30 je Sync) und überschreibt keine wartende lokale Änderung', async () => {
+  for (let i = 0; i < 45; i++) {
+    await remote.insert({ summary: `Alt ${i}`, start: { date: '2031-03-10' }, end: { date: '2031-03-11' }, extendedProperties: { private: { priority: 'mittel' } } });
+  }
+  const store = fakeStore();
+  assert.strictEqual((await S.syncWith(store, remote)).calUpdated, 30);
+  assert.strictEqual((await S.syncWith(store, remote)).calUpdated, 15);
+  assert.strictEqual((await S.syncWith(store, remote)).calUpdated, 0);
+
+  // Ein Task mit wartender lokaler Änderung (Haken gesetzt) wird von der Umstellung nicht angefasst.
+  const t = (await store.getRawTasks())[0];
+  await updateLocal(store, t.id, { in_calendar: true });
+  await S.reconcileCalendar(store, remote, { untimedAtEndOfDay: false, timeZone: 'Europe/Vienna' }, new Set([t.id]));
+  const r = await S.syncWith(store, remote);
+  assert.strictEqual(r.pushed, 1);
+  assert.strictEqual(remote.events.get(t.google_event_id).start.dateTime.slice(0, 10), '2031-03-10', 'Haken wirkt: Termin liegt jetzt an seinem Tag (Platz am Tagesende)');
+});
+
+test('Lokale Tasks aus einer Version ohne Schalter werden beim nächsten Sync abgeleitet und umgestellt', async () => {
+  const store = fakeStore();
+  await createLocal(store, { title: 'Aus dem Altbestand', due_date: '2031-03-10', in_calendar: true });
+  await S.syncWith(store, remote);
+  // Altbestand nachbilden: Feld fehlt lokal, Event ist im alten Format (ohne Marker).
+  await store.saveRawTasks((await store.getRawTasks()).map((t) => { const { in_calendar, cal_migrate, hidden_date, ...rest } = t; return rest; }));
+  const evId = (await store.getRawTasks())[0].google_event_id;
+  const priv = { ...remote.events.get(evId).extendedProperties.private, cal: '' };
+  remote.editDirect(evId, { start: { date: '2031-03-10', dateTime: null }, end: { date: '2031-03-11', dateTime: null }, extendedProperties: { private: priv } });
+  const r = await S.syncWith(store, remote);
+  assert.strictEqual(r.calUpdated, 1);
+  assert.match(remote.events.get(evId).start.date, HIDDEN_DAY);
+  assert.strictEqual((await store.getRawTasks())[0].in_calendar, false);
 });
