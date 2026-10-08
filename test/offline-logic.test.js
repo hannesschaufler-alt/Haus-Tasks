@@ -33,16 +33,29 @@ test('Bucket (GTD-Status): neue Tasks landen standardmäßig in "todo", ungülti
   assert.deepStrictEqual(L.BUCKETS, ['inbox', 'todo', 'later']);
 });
 
-test('Ein Datum zu setzen befördert einen "Später"-Task automatisch zu "To Do"', () => {
-  const { task: t0 } = L.createTask([], { title: 'X', bucket: 'later' }, CATS);
-  const { task: t1 } = L.updateTask([t0], t0.id, { due_date: '2031-01-01' }, CATS);
-  assert.strictEqual(t1.bucket, 'todo');
-  // Ändert der Aufruf den Status selbst mit, hat das Vorrang vor der Automatik.
-  const { task: t2 } = L.updateTask([t0], t0.id, { due_date: '2031-01-01', bucket: 'later' }, CATS);
-  assert.strictEqual(t2.bucket, 'later');
-  // Ohne Datumsänderung bleibt "Später" unangetastet.
-  const { task: t3 } = L.updateTask([t0], t0.id, { notes: 'x' }, CATS);
-  assert.strictEqual(t3.bucket, 'later');
+test('Ein Datum zu setzen holt einen Task aus der Liste „Später“ zurück in die Hauptliste', () => {
+  const colors = { tasks: '9', spaeter: '6' };
+  const { task: t0 } = L.createTask([], { title: 'X', list_id: 'spaeter' }, CATS, colors);
+  assert.strictEqual(t0.color, '6');
+  const { task: t1 } = L.updateTask([t0], t0.id, { due_date: '2031-01-01' }, CATS, colors);
+  assert.strictEqual(t1.list_id, 'tasks');
+  assert.strictEqual(t1.color, '9');
+  // Wählt der Aufruf die Liste selbst, hat das Vorrang vor der Automatik.
+  const { task: t2 } = L.updateTask([t0], t0.id, { due_date: '2031-01-01', list_id: 'spaeter' }, CATS, colors);
+  assert.strictEqual(t2.list_id, 'spaeter');
+  // Ohne Datumsänderung bleibt der Task in „Später“.
+  const { task: t3 } = L.updateTask([t0], t0.id, { notes: 'x' }, CATS, colors);
+  assert.strictEqual(t3.list_id, 'spaeter');
+});
+
+test('Alter Status „later“ (vor der Liste „Später“): wird beim Anfassen in die Liste „Später“ verschoben, mit Datum in die Hauptliste', () => {
+  const colors = { tasks: '9', spaeter: '6' };
+  const { task: t0 } = L.createTask([], { title: 'X', bucket: 'later' }, CATS, colors);
+  assert.strictEqual(t0.bucket, 'later');
+  const { task: t1 } = L.updateTask([t0], t0.id, { notes: 'x' }, CATS, colors);
+  assert.deepStrictEqual([t1.list_id, t1.bucket, t1.color], ['spaeter', 'todo', '6']);
+  const { task: t2 } = L.updateTask([t0], t0.id, { due_date: '2031-01-01' }, CATS, colors);
+  assert.deepStrictEqual([t2.list_id, t2.bucket], ['tasks', 'todo']);
 });
 
 test('Serie ohne Datum wird abgelehnt, mit Datum normalisiert', () => {

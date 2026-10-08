@@ -95,6 +95,8 @@
   .tab:hover { color: var(--text); }
   .tab.on { color: var(--text); border-bottom-color: var(--c, var(--accent)); }
   .tab .dot-c { width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
+  .tab.list { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: grab; }
+  .tab.dragging { position: relative; z-index: 2; cursor: grabbing; background: var(--chip); border-radius: 8px 8px 0 0; box-shadow: var(--shadow); }
   .tab.add { padding: 8px 10px; font-size: 16px; }
   .tab.edit { margin-left: auto; padding: 8px 10px; }
   .section-header.static { cursor: default; }
@@ -488,7 +490,7 @@ function openBulkForm() {
   const listSel = h('select', {}, keepOpt('– unverändert –'), state.lists.map((l) => h('option', { value: l.id }, l.name)));
   const who = h('select', {}, keepOpt('– unverändert –'), h('option', { value: '' }, 'Niemand'), ASSIGNEES.map((a) => h('option', { value: a }, a)));
   const prio = h('select', {}, keepOpt('– unverändert –'), cfg.priorities.map((p) => h('option', { value: p }, p)));
-  const bucket = h('select', {}, keepOpt('– unverändert –'), h('option', { value: 'todo' }, 'To Do'), h('option', { value: 'later' }, 'Später'));
+  const bucket = h('select', {}, keepOpt('– unverändert –'), h('option', { value: 'todo' }, 'Anstehend'), h('option', { value: 'inbox' }, 'Inbox (noch einsortieren)'));
   const inCal = h('select', {}, keepOpt('– unverändert –'), h('option', { value: 'yes' }, 'Ja, anzeigen (Tasks ohne Datum nicht)'), h('option', { value: 'no' }, 'Nein, nur in der App'));
   const err = h('div', { class: 'error' });
   const form = $('#form');
@@ -504,7 +506,7 @@ function openBulkForm() {
     if (who.value !== KEEP) patch.assignee = who.value || null;
     if (prio.value !== KEEP) patch.priority = prio.value;
     if (bucket.value !== KEEP) patch.bucket = bucket.value;
-    if (patch.list_id && patch.list_id !== OfflineLogic.MAIN_LIST) delete patch.bucket; // Inbox/Später gibt es nur in der Hauptliste
+    if (patch.list_id && patch.list_id !== OfflineLogic.MAIN_LIST) delete patch.bucket; // Inbox gibt es nur in der Hauptliste
     if (inCal.value !== KEEP) patch.in_calendar = inCal.value === 'yes';
     if (!Object.keys(patch).length) { err.textContent = 'Nichts zum Ändern ausgewählt.'; return; }
     const { ok, errors } = await applyBulk(ids, patch);
@@ -550,12 +552,48 @@ async function toggleDone(t, done) {
   } catch (e) { toast(e.message); reload(); }
 }
 
-// Schnelles Umsortieren zwischen "To Do" und "Später", direkt in der Zeile statt über die Detailansicht.
+// Schnelles Verschieben zwischen Hauptliste und der Liste „Später“, direkt in der Zeile statt über die Detailansicht.
 function listMoveBadge(t) {
-  const bucket = t.bucket || 'todo';
-  return bucket === 'later'
-    ? h('button', { class: 'badge list-move', title: 'Zu To Do verschieben', onclick: (e) => { e.stopPropagation(); moveBucket(t, 'todo'); } }, '↑ To Do')
-    : h('button', { class: 'badge list-move', title: 'Auf Später verschieben', onclick: (e) => { e.stopPropagation(); moveBucket(t, 'later'); } }, '→ Später');
+  const list = listOf(t);
+  if (list === OfflineLogic.MAIN_LIST) return h('button', { class: 'badge list-move', title: 'In die Liste „Später“ verschieben', onclick: (e) => { e.stopPropagation(); moveToLater(t); } }, '→ Später');
+  if (list === OfflineLogic.LATER_LIST) return h('button', { class: 'badge list-move', title: 'Zurück in die Hauptliste', onclick: (e) => { e.stopPropagation(); moveBucket(t, { list_id: OfflineLogic.MAIN_LIST }); } }, '↑ Tasks');
+  return null;
+}
+
+// Die Liste „Später“ gibt es nur, wenn sie jemand braucht: beim ersten Verschieben (oder bei der Umstellung alter
+// „Später“-Tasks) wird sie angelegt – mit fester ID, damit mehrere Geräte nicht jeweils eine eigene erfinden.
+async function ensureLaterList() {
+  if (state.lists.some((l) => l.id === OfflineLogic.LATER_LIST)) return;
+  const used = new Set(state.lists.map((l) => l.color));
+  const color = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
+  await Offline.setSettings({ lists: [...state.lists, { id: OfflineLogic.LATER_LIST, name: 'Später', color }] });
+  await refreshLists();
+}
+async function moveToLater(t) {
+  try {
+    await ensureLaterList();
+    await Offline.mutate('task', 'update', { id: t.id, patch: { list_id: OfflineLogic.LATER_LIST, bucket: 'todo' } });
+    await reload();
+    kickSync();
+    syncNow(true); // neue Liste = geänderte Einstellung, steht nicht in der Warteschlange
+  } catch (e) { toast(e.message); reload(); }
+}
+
+// Einmalige Umstellung: der frühere Status „Später“ ist jetzt die Liste „Später“. Läuft nach jedem Laden/Sync, weil
+// ein noch nicht aktualisiertes Gerät weiterhin Tasks mit dem alten Status anlegen kann.
+let migratingLater = false;
+async function migrateLater() {
+  if (migratingLater) return;
+  migratingLater = true;
+  try {
+    const old = state.tasks.filter((t) => t.bucket === 'later');
+    if (!old.length) return;
+    await ensureLaterList();
+    for (const t of old) await Offline.mutate('task', 'update', { id: t.id, patch: { list_id: OfflineLogic.LATER_LIST, bucket: 'todo' } });
+    await reload();
+    kickSync();
+    syncNow(true);
+  } catch (e) { /* beim nächsten Laden/Sync erneut */ } finally { migratingLater = false; }
 }
 
 async function moveBucket(t, bucket) {
@@ -649,7 +687,7 @@ function inboxRow(t) {
     h('div', { class: 'actions' },
       h('button', { class: 'badge list-move ok', title: '2-Minuten-Regel: gleich erledigt', onclick: () => completeFromInbox(t) }, '✓'),
       h('button', { class: 'badge list-move', title: 'Zu To Do', onclick: () => triageInbox(t, { bucket: 'todo' }) }, 'To Do'),
-      h('button', { class: 'badge list-move', title: 'Auf Später', onclick: () => triageInbox(t, { bucket: 'later' }) }, 'Später'),
+      h('button', { class: 'badge list-move', title: 'In die Liste „Später“', onclick: () => moveToLater(t) }, 'Später'),
       h('button', { class: 'icon-btn', title: 'Verwerfen', onclick: () => removeTask(t) }, '✕')));
 }
 
@@ -671,10 +709,11 @@ function homePage() {
   const list = currentList();
   const main = list.id === OfflineLogic.MAIN_LIST;
   const mine = state.tasks.filter((t) => listOf(t) === list.id);
-  // Hauptliste: nur „Anstehend“ hier, Später/Inbox separat. Alle anderen Listen kennen nur einen einzigen Bereich.
-  const pool = main ? mine.filter((t) => (t.bucket || 'todo') === 'todo') : mine;
-  const laterList = main ? mine.filter((t) => (t.bucket || 'todo') === 'later') : [];
-  const laterCount = laterList.filter((t) => !t.done).length;
+  // Hauptliste: „Anstehend“, die Inbox steht separat darüber. Alle anderen Listen (auch „Später“) kennen nur einen Bereich.
+  const pool = main ? mine.filter((t) => (t.bucket || 'todo') !== 'inbox') : mine;
+  // Die Liste „Später“ ist bewusst nach Anlagedatum sortiert (älteste zuerst), nicht nach dem Sortier-Dropdown – damit
+  // ältere, sonst leicht vergessene Punkte beim gelegentlichen Reinschauen automatisch nach oben wandern.
+  const sortFn = list.id === OfflineLogic.LATER_LIST ? byCreatedAsc : undefined;
   const openCount = pool.filter((t) => !t.done).length;
   const filtered = pool.filter((t) => !state.assignees.size || state.assignees.has(t.assignee));
   const body = h('div', {},
@@ -687,7 +726,7 @@ function homePage() {
         Object.entries(SORTS).map(([k, s]) => h('option', { value: k, selected: k === state.sort }, s.label))),
       doneToggle()),
     h('div', { class: 'filters' }, chipGroup('Wer', ASSIGNEES, state.assignees)),
-    taskList(filtered, mine.length ? 'Keine Tasks für diesen Filter.' : (main ? 'Noch keine Tasks. Tipp oben etwas ein!' : `„${list.name}“ ist noch leer. Tipp oben etwas ein!`)));
+    taskList(filtered, mine.length ? 'Keine Tasks für diesen Filter.' : (main ? 'Noch keine Tasks. Tipp oben etwas ein!' : `„${list.name}“ ist noch leer. Tipp oben etwas ein!`), sortFn));
   const open = !main || state.todoOpen;
   return h('div', {},
     main && inboxSection(),
@@ -695,9 +734,6 @@ function homePage() {
       main ? sectionHeader('Anstehend', openCount, state.todoOpen, () => { state.todoOpen = !state.todoOpen; render(); })
         : h('div', { class: 'section-header static' }, h('strong', {}, `${list.name} (${openCount})`)),
       open && body),
-    main && h('div', { class: 'section' },
-      sectionHeader('Später', laterCount, state.laterOpen, () => { state.laterOpen = !state.laterOpen; render(); }),
-      state.laterOpen && taskList(laterList, 'Nichts auf Später verschoben.', byCreatedAsc)),
     state.selecting && selectBar(open ? sorted(filtered).map((t) => t.id) : []));
 }
 
@@ -730,10 +766,76 @@ function paintTabs() {
   const nav = $('#listTabs');
   const cur = currentList();
   nav.replaceChildren(
-    ...state.lists.map((l) => h('button', { class: 'tab' + (l.id === cur.id ? ' on' : ''), style: `--c:${hex(l.color)}`, onclick: () => setList(l.id) },
+    ...state.lists.map((l) => h('button', { class: 'tab list' + (l.id === cur.id ? ' on' : ''), 'data-id': l.id, style: `--c:${hex(l.color)}`, onclick: () => setList(l.id) },
       h('span', { class: 'dot-c' }), l.name)),
     h('button', { class: 'tab add', title: 'Neue Liste', onclick: () => openListForm(null) }, '＋'),
     h('button', { class: 'tab edit', title: `Liste „${cur.name}“ bearbeiten`, onclick: () => openListForm(cur) }, '✎'));
+  nav.querySelectorAll('.tab.list').forEach(enableTabDrag);
+}
+
+// Reihenfolge der Listen per Drag&Drop: Maus – einfach ziehen; Touch – kurz gedrückt halten, dann ziehen (sonst scrollt
+// die Reiterleiste). Wie bei der Checkliste über Pointer-Events (die native HTML5-Drag-API ist auf dem Handy unzuverlässig);
+// die Reihenfolge entsteht aus der DOM-Reihenfolge der Reiter und wird in den gemeinsamen Einstellungen gespeichert.
+const LONG_PRESS_MS = 350;
+let justDragged = false;
+function enableTabDrag(tab) {
+  let timer = null, active = false, startX = 0, pointerId = null, touch = false;
+  const nav = tab.parentElement;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  const activate = () => {
+    active = true;
+    tab.classList.add('dragging');
+    try { tab.setPointerCapture(pointerId); } catch { /* Zeiger schon weg */ }
+  };
+  tab.addEventListener('pointerdown', (e) => {
+    if (e.button > 0) return;
+    touch = e.pointerType !== 'mouse';
+    pointerId = e.pointerId;
+    startX = e.clientX;
+    if (touch) timer = setTimeout(activate, LONG_PRESS_MS);
+  });
+  tab.addEventListener('pointermove', (e) => {
+    if (!active) {
+      const moved = Math.abs(e.clientX - startX);
+      if (touch && moved > 8) cancel(); // der Finger scrollt schon – kein Ziehen
+      else if (!touch && pointerId === e.pointerId && e.buttons === 1 && moved > 6) activate();
+      return;
+    }
+    tab.style.transform = `translateX(${e.clientX - startX}px)`;
+    const prev = tab.previousElementSibling?.classList.contains('list') ? tab.previousElementSibling : null;
+    const next = tab.nextElementSibling?.classList.contains('list') ? tab.nextElementSibling : null;
+    if (prev) {
+      const r = prev.getBoundingClientRect();
+      if (e.clientX < r.left + r.width / 2) { nav.insertBefore(tab, prev); startX = e.clientX; tab.style.transform = ''; return; }
+    }
+    if (next) {
+      const r = next.getBoundingClientRect();
+      if (e.clientX > r.left + r.width / 2) { nav.insertBefore(next, tab); startX = e.clientX; tab.style.transform = ''; }
+    }
+  });
+  // Solange gezogen wird, darf die Seite nicht mitscrollen (nur nach dem langen Drücken wirksam).
+  tab.addEventListener('touchmove', (e) => { if (active) e.preventDefault(); }, { passive: false });
+  tab.addEventListener('contextmenu', (e) => { if (touch) e.preventDefault(); });
+  const end = async () => {
+    cancel();
+    if (!active) return;
+    active = false;
+    justDragged = true; // der Klick direkt nach dem Loslassen soll nicht die Liste wechseln
+    setTimeout(() => { justDragged = false; }, 0);
+    tab.classList.remove('dragging');
+    tab.style.transform = '';
+    const order = [...nav.querySelectorAll('.tab.list')].map((el) => el.dataset.id);
+    if (order.join() === state.lists.map((l) => l.id).join()) return;
+    try {
+      await Offline.setSettings({ lists: order.map((id) => state.lists.find((l) => l.id === id)).filter(Boolean) });
+      await refreshLists();
+      render();
+      syncNow(true); // Einstellungen stehen nicht in der Warteschlange
+    } catch (e) { toast(e.message); render(); }
+  };
+  tab.addEventListener('pointerup', end);
+  tab.addEventListener('pointercancel', end);
+  tab.addEventListener('click', (e) => { if (justDragged) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
 }
 
 // Anlegen / Umbenennen / Umfärben / Löschen einer Liste. Die Farbe bekommen neue Tasks der Liste (und damit ihre
@@ -1016,7 +1118,7 @@ function openForm(task) {
   time.addEventListener('change', () => { const had = !endTime.disabled; syncTimeFields(); if (time.value && !had) inCal.checked = true; });
   const prio = h('select', {}, cfg.priorities.map((p) => h('option', { value: p, selected: p === t.priority }, p)));
   // Status = in welchem Bereich der Startseite der Task liegt (früher nur per Schnellknopf in der Zeile änderbar).
-  const bucketSel = h('select', {}, [['todo', 'Anstehend'], ['later', 'Später'], ['inbox', 'Inbox (noch einsortieren)']]
+  const bucketSel = h('select', {}, [['todo', 'Anstehend'], ['inbox', 'Inbox (noch einsortieren)']]
     .map(([v, l]) => h('option', { value: v, selected: (t.bucket || 'todo') === v }, l)));
   const listSel = h('select', {}, state.lists.map((l) => h('option', { value: l.id, selected: l.id === listOf(t) }, l.name)));
   const who = makeAssigneePicker(t.assignee);
@@ -1081,7 +1183,7 @@ function openForm(task) {
     (task.google_updated ? ` · ${new Date(task.google_updated).toLocaleString('de-DE')}` : ''));
 
   const field = (label, ...ctl) => h('div', { class: 'field' }, h('label', {}, label), ...ctl);
-  // Inbox/Anstehend/Später gibt es nur in der Hauptliste.
+  // Inbox/Anstehend gibt es nur in der Hauptliste.
   const statusField = field('Status', bucketSel);
   const syncStatus = () => { statusField.hidden = listSel.value !== OfflineLogic.MAIN_LIST; };
   listSel.addEventListener('change', syncStatus);
@@ -1224,6 +1326,7 @@ async function syncNow(silent) {
     state.status = await computeStatus();
   }
   syncing = false;
+  setTimeout(migrateLater, 0); // erst nach dem Sync-Durchlauf (siehe migrateLater)
   if (syncBtn()) syncBtn().disabled = false;
   render();
 }
@@ -1353,6 +1456,7 @@ async function boot() {
   try { state.listId = localStorage.getItem('haus-tasks-list') || OfflineLogic.MAIN_LIST; } catch { /* egal */ }
   await refreshLists();
   await reload();
+  migrateLater();
   syncNow(true); // Sync beim Öffnen
 }
 

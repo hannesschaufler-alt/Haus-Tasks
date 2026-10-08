@@ -13,6 +13,8 @@
   // Listen (Tasks, Einkauf, …): jeder Task gehört zu genau einer. Die Hauptliste „tasks“ gibt es immer und nur dort
   // gibt es Inbox/Später; in allen anderen Listen landet alles direkt bei „todo“. Siehe sync-core.js (resolveSettings).
   const MAIN_LIST = 'tasks';
+  // „Später“ ist eine ganz normale Liste (früher ein Status der Hauptliste): feste ID, damit alle Geräte dieselbe meinen.
+  const LATER_LIST = 'spaeter';
 
   function uid() {
     if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -77,10 +79,18 @@
       if (!('color' in patch) && listColors[patch.list_id]) next.color = listColors[patch.list_id];
       if (patch.list_id !== MAIN_LIST && !('bucket' in patch)) next.bucket = 'todo';
     }
-    // Ein Datum zu vergeben heißt „jetzt konkret“, nicht mehr „irgendwann“ – ein „Später“-Task wird dadurch
-    // automatisch wieder zu einem To-Do, außer der Aufruf ändert den Status ohnehin schon selbst.
-    if (patch.due_date && cur.bucket === 'later' && !('bucket' in patch)) {
+    // Ein Datum zu vergeben heißt „jetzt konkret“, nicht mehr „irgendwann“ – ein Task aus der Liste „Später“ wandert
+    // dadurch automatisch in die Hauptliste zurück, außer der Aufruf wählt die Liste ohnehin selbst.
+    if (patch.due_date && cur.list_id === LATER_LIST && !('list_id' in patch)) {
+      next.list_id = MAIN_LIST;
+      if (!('color' in patch) && listColors[MAIN_LIST]) next.color = listColors[MAIN_LIST];
+    }
+    // Veralteter Status „later“ (vor der Liste „Später“): beim Anfassen in die Liste „Später“ umziehen – mit neuem
+    // Datum aber gleich zurück in die Hauptliste (siehe oben).
+    if (cur.bucket === 'later' && !('bucket' in patch) && !('list_id' in patch)) {
+      next.list_id = patch.due_date ? MAIN_LIST : LATER_LIST;
       next.bucket = 'todo';
+      if (!('color' in patch) && listColors[next.list_id]) next.color = listColors[next.list_id];
     }
     // Ohne Datum ergibt eine Uhrzeit nichts – wird das Datum entfernt, fallen Uhrzeit und Endzeit automatisch
     // mit weg. Ohne Startuhrzeit ergibt eine Endzeit ebenso nichts, und eine Endzeit vor/gleich der
@@ -206,6 +216,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS, MAIN_LIST,
+    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST,
   };
 });
