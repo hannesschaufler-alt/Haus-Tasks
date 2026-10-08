@@ -373,9 +373,11 @@ function dateChip(t) {
 // --- Sortieren & Filtern ---
 // Tasks ohne Datum sollen ganz oben stehen (leerer String sortiert vor jedem echten Datum), nicht ganz unten.
 const dueCmp = (a, b) => (a.due_date || '').localeCompare(b.due_date || '');
+// Neueste zuerst. Neu eingetragene Tasks haben noch kein Datum und sollen bei der Standardsortierung ganz oben stehen.
+const newestCmp = (a, b) => (b.created_at || '').localeCompare(a.created_at || '');
 const prioCmp = (a, b) => PRIO_RANK[a.priority] - PRIO_RANK[b.priority];
 const SORTS = {
-  due: { label: 'Fälligkeit, dann Priorität', fn: (a, b) => dueCmp(a, b) || prioCmp(a, b) || a.title.localeCompare(b.title) },
+  due: { label: 'Fälligkeit, Neue zuerst', fn: (a, b) => dueCmp(a, b) || (a.due_date ? 0 : newestCmp(a, b)) || prioCmp(a, b) || a.title.localeCompare(b.title) },
   prio: { label: 'Priorität, dann Fälligkeit', fn: (a, b) => prioCmp(a, b) || dueCmp(a, b) || a.title.localeCompare(b.title) },
   title: { label: 'Titel A–Z', fn: (a, b) => a.title.localeCompare(b.title) },
 };
@@ -705,7 +707,7 @@ function inboxRow(t) {
 }
 
 function inboxSection() {
-  const items = state.tasks.filter((t) => (t.bucket || 'todo') === 'inbox');
+  const items = state.tasks.filter((t) => (t.bucket || 'todo') === 'inbox').sort(newestCmp);
   if (!items.length) return null;
   return h('div', { class: 'inbox-list' }, items.map(inboxRow));
 }
