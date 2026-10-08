@@ -233,7 +233,7 @@
     // Versteckter Termin (siehe HIDDEN_EPOCH): echtes Datum/Uhrzeit stehen in den Zusatzfeldern, der Termin selbst
     // liegt auf einem alten Tag, den wir uns merken, damit er beim nächsten Schreiben nicht umzieht.
     if (p.cal === 'hide') {
-      const due_date = p.due || null;
+      const due_date = p.due && !isHiddenDate(p.due) ? p.due : null; // siehe unten: kaputte Altdaten (Datum 1971–1981) verwerfen
       const due_time = due_date && p.dueTime ? p.dueTime : null;
       return {
         title, due_date, due_time, due_end_time: due_time && p.dueEnd ? p.dueEnd : null,
@@ -244,7 +244,9 @@
         in_calendar: false, cal_migrate: false, hidden_date: isHiddenDate(startDate) ? startDate : null,
       };
     }
-    const due_date = p.noDate === 'true' ? null : (startDate || null);
+    // Ein Datum aus dem Bereich der versteckten Termine (1971–1981) ist nie ein echtes Fälligkeitsdatum, sondern
+    // stammt von einer älteren App-Version, die den versteckten Tag als Datum gelesen und zurückgeschrieben hat.
+    const due_date = p.noDate === 'true' || isHiddenDate(startDate) ? null : (startDate || null);
     // Ein Platz am Tagesende (siehe usesTimeSlot) zählt als „keine Uhrzeit“. Der Marker allein reicht nicht – ohne
     // dateTime (z. B. wieder auf ganztägig gestellt) ist der Termin kein Platzhalter mehr. Ältere Termine
     // dieser Art (23:58–23:59, noch ohne Platznummer) bekommen slot_index null und werden beim Abgleich umgestellt.
@@ -602,5 +604,5 @@
     return { pulled, pushed: sent.length, failed, clashes, aborted, abortReason, slotsUpdated, calUpdated };
   }
 
-  return { syncWith, pull, push, syncConfig, reconcileTimeSlots, reconcileCalendar, hiddenDateFor, eventBody, taskShapeFromEvent, usesTimeSlot, withSlotIndex, slotTimes, resolveSettings, DEFAULT_SETTINGS, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
+  return { syncWith, pull, push, syncConfig, reconcileTimeSlots, reconcileCalendar, hiddenDateFor, eventBody, taskShapeFromEvent, usesTimeSlot, withSlotIndex, slotTimes, resolveSettings, DEFAULT_SETTINGS, isHiddenDate, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
 });

@@ -1016,3 +1016,13 @@ test('Listen werden über das Konfigurations-Event geteilt', async () => {
   await S.syncWith(b, remote);
   assert.deepStrictEqual(S.resolveSettings((await b.getConfig()).settings).lists.map((l) => l.name), ['Tasks', 'Einkauf']);
 });
+
+test('Ein Termin, den eine ältere App-Version auf den versteckten Tag zurückgeschrieben hat, liefert kein falsches Fälligkeitsdatum', async () => {
+  await remote.insert({ summary: 'Kaputt', start: { date: '1975-05-05' }, end: { date: '1975-05-06' },
+    extendedProperties: { private: { priority: 'mittel', noDate: '' } } });
+  await remote.insert({ summary: 'Kaputt versteckt', start: { date: '1975-05-05' }, end: { date: '1975-05-06' },
+    extendedProperties: { private: { priority: 'mittel', cal: 'hide', due: '1975-05-05' } } });
+  const store = fakeStore();
+  await S.syncWith(store, remote);
+  for (const t of await store.getRawTasks()) assert.strictEqual(t.due_date, null, t.title);
+});

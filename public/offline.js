@@ -104,6 +104,7 @@
   // normaler Sync das nicht von selbst korrigieren (siehe „Echo der eigenen Änderung“ in sync-core.js)
   // – hier wird jede so betroffene Zeile beim Laden einmalig lokal wieder auf „kein Datum“ zurückgesetzt.
   const POISONED_DATE = root.SyncCore.NO_DATE_PLACEHOLDER;
+  const MIN_DATE = '2026-01-01';
   async function getCachedTasks() {
     let raw = await getRawTasks();
     const stray = raw.filter((t) => t.title === CONFIG_TITLE);
@@ -118,7 +119,19 @@
       raw = raw.map((t) => (t.due_date === POISONED_DATE ? { ...t, due_date: null } : t));
       await saveRawTasks(raw);
     }
-    return raw.filter((t) => !t.deleted && t.title !== CONFIG_TITLE);
+    // Falsche Fälligkeitsdaten aus den Jahren 1971–1981 (der Bereich der versteckten Termine, siehe sync-core.js)
+    // stammen von einer älteren App-Version, die den versteckten Tag als Datum gelesen hat: einmalig lokal UND in
+    // Google zurücksetzen (Warteschlangen-Eintrag), sonst käme das Datum bei einem anderen Gerät wieder.
+    const fake = raw.filter((t) => !t.deleted && t.due_date && root.SyncCore.isHiddenDate(t.due_date));
+    if (fake.length) {
+      const ids = new Set(fake.map((t) => t.id));
+      raw = raw.map((t) => (ids.has(t.id) ? { ...t, due_date: null, due_time: null, due_end_time: null, in_calendar: false } : t));
+      await saveRawTasks(raw);
+      for (const t of fake) if (t.google_event_id) await enqueue({ kind: 'task', op: 'update', taskId: t.id, patch: { due_date: null, due_time: null, due_end_time: null, in_calendar: false }, baseUpdatedAt: t.updated_at });
+    }
+    // Alles vor 2026 ist für die Anzeige kein sinnvolles Datum (Platzhalter/Altlasten) und wird ausgeblendet.
+    return raw.filter((t) => !t.deleted && t.title !== CONFIG_TITLE)
+      .map((t) => (t.due_date && t.due_date < MIN_DATE ? { ...t, due_date: null, due_time: null, due_end_time: null, in_calendar: false } : t));
   }
   async function configOrEmpty() { return (await getConfig()) || { categories: {}, locations: [] }; }
 

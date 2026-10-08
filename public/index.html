@@ -68,10 +68,12 @@
     background: var(--card); color: var(--text); margin-bottom: 10px; box-shadow: var(--shadow); }
   .quick-capture:focus { outline: none; border-color: var(--accent); }
   .inbox-list { display: grid; gap: 8px; margin-bottom: 18px; }
-  .inbox-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 10px 12px;
+  .inbox-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 6px 12px; min-height: 43px; box-sizing: border-box;
     background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius); }
   .inbox-row .title { cursor: pointer; }
   .inbox-row .actions { display: flex; align-items: center; gap: 4px; }
+  .inbox-row .badge.list-move { padding: 1px 8px; font-size: 11.5px; }
+  .inbox-row .icon-btn { padding: 2px 6px; }
   /* Deutlich sichtbarer Rahmen statt der reinen Chip-Füllung: die sonst übliche .badge-Füllfarbe
      (--chip) liegt hier auf einem ebenfalls schon getönten Untergrund (Inbox-Zeile/Task-Karte) und
      ist dort kaum vom Hintergrund zu unterscheiden. */
@@ -104,7 +106,7 @@
   /* Asana-Listenansicht: eine zusammenhängende Karte, Zeilen nur durch dünne Linien getrennt, einzeilig. */
   .list { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
   .date-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; pointer-events: none; }
-  .task { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); transition: background .12s; }
+  .task { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); transition: background .12s; }
   .task:last-child { border-bottom: 0; }
   .task:hover { background: color-mix(in srgb, var(--accent) 6%, var(--card)); }
   .task .right { display: flex; align-items: center; gap: 8px; justify-self: end; }
@@ -236,7 +238,7 @@
     .btn { padding: 10px 14px; }
     .btn.small { padding: 7px 12px; }
     .icon-btn { padding: 10px; }
-    .task { gap: 8px; padding: 7px 10px; }
+    .task { gap: 8px; padding: 10px; }
     .task input[type=checkbox] { width: 24px; height: 24px; min-width: 24px; min-height: 24px; max-width: 24px; max-height: 24px; }
     .select-dot { width: 24px; height: 24px; min-width: 24px; }
     .task .right { gap: 6px; }
