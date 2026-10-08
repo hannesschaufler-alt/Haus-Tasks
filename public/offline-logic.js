@@ -10,6 +10,9 @@
   const ASSIGNEES = ['Caro', 'Hannes']; // feste Liste, siehe sync-core.js für die Google-Kalender-Kürzel
   // GTD-Status: 'inbox' (Schnellerfassung, noch nicht einsortiert), 'todo', 'later' ("Später"-Liste).
   const BUCKETS = ['inbox', 'todo', 'later'];
+  // Listen (Tasks, Einkauf, …): jeder Task gehört zu genau einer. Die Hauptliste „tasks“ gibt es immer und nur dort
+  // gibt es Inbox/Später; in allen anderen Listen landet alles direkt bei „todo“. Siehe sync-core.js (resolveSettings).
+  const MAIN_LIST = 'tasks';
 
   function uid() {
     if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -20,12 +23,14 @@
   const today = () => new Date().toLocaleDateString('sv-SE');
   const findTask = (tasks, id) => tasks.find((t) => t.id === id);
 
-  function createTask(tasks, input, categories) {
+  // `listColors` (Listen-ID → Farbe) gibt neuen Tasks die Farbe ihrer Liste; ohne Angabe bleibt es bei Vorgabe/Kategorie.
+  function createTask(tasks, input, categories, listColors = {}) {
     const title = String(input.title ?? '').trim();
     if (!title) throw new Error('Titel fehlt');
     const category = input.category || null;
     const recurrence = input.recurrence ? Recurrence.normalizeRule(input.recurrence, input.due_date) : null;
     if (recurrence && !input.due_date) throw new Error('Eine Serie braucht ein Datum');
+    const list_id = input.list_id || MAIN_LIST;
     const task = {
       id: uid(), // ohne zentrale Datenbank bekommt jeder Task hier seine endgültige ID, die sich nie mehr ändert
       title,
@@ -36,11 +41,12 @@
       location: input.location || null,
       assignee: ASSIGNEES.includes(input.assignee) ? input.assignee : null,
       priority: PRIORITIES.includes(input.priority) ? input.priority : 'mittel',
-      bucket: BUCKETS.includes(input.bucket) ? input.bucket : 'todo',
+      bucket: list_id !== MAIN_LIST ? 'todo' : BUCKETS.includes(input.bucket) ? input.bucket : 'todo',
+      list_id,
       // „In Google Kalender anzeigen“: aus, außer der Task hat eine Uhrzeit (ein Termin gehört in den Kalender).
       // Ohne Datum gibt es nichts anzuzeigen. Siehe sync-core.js (HIDDEN_EPOCH).
       in_calendar: !!input.due_date && (input.in_calendar === undefined ? !!input.due_time : !!input.in_calendar),
-      color: input.color || (category && categories[category]) || '9',
+      color: input.color || listColors[list_id] || (category && categories[category]) || '9',
       notes: String(input.notes ?? ''),
       checklist: Array.isArray(input.checklist) ? input.checklist : [],
       done: false,
@@ -57,13 +63,19 @@
     return { task, tasks: [...tasks, task] };
   }
 
-  function updateTask(tasks, id, patch, categories) {
+  function updateTask(tasks, id, patch, categories, listColors = {}) {
     const cur = findTask(tasks, id);
     if (!cur) throw new Error('Task nicht gefunden');
     const next = { ...cur, ...patch, updated_at: nowIso() };
     // Kategorie gewechselt, Farbe nicht ausdrücklich mitgegeben: Farbe der neuen Kategorie vorschlagen.
     if (patch.category && patch.category !== cur.category && !('color' in patch)) {
       next.color = categories[patch.category] || cur.color;
+    }
+    // Liste gewechselt: Farbe der neuen Liste übernehmen (außer sie wird ausdrücklich mitgegeben); nur die Hauptliste
+    // kennt Inbox/Später, in jeder anderen Liste ist alles „todo“.
+    if (patch.list_id && patch.list_id !== (cur.list_id || MAIN_LIST)) {
+      if (!('color' in patch) && listColors[patch.list_id]) next.color = listColors[patch.list_id];
+      if (patch.list_id !== MAIN_LIST && !('bucket' in patch)) next.bucket = 'todo';
     }
     // Ein Datum zu vergeben heißt „jetzt konkret“, nicht mehr „irgendwann“ – ein „Später“-Task wird dadurch
     // automatisch wieder zu einem To-Do, außer der Aufruf ändert den Status ohnehin schon selbst.
@@ -194,6 +206,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS,
+    ASSIGNEES, BUCKETS, MAIN_LIST,
   };
 });

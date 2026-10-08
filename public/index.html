@@ -85,8 +85,17 @@
   .filters { margin-bottom: 14px; }
   .filters .group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
   .filters .group > b { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; width: 74px; }
-  .manage-link { text-transform: none; letter-spacing: normal; color: var(--muted); text-decoration: none; }
-  .manage-link:hover { color: var(--accent); }
+  /* Listen-Reiter unter der Kopfzeile */
+  .tabs { display: flex; align-items: center; gap: 4px; margin: 0 0 12px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: none;
+    color: var(--muted); font-weight: 500; margin-bottom: -1px; white-space: nowrap; }
+  .tab:hover { color: var(--text); }
+  .tab.on { color: var(--text); border-bottom-color: var(--c, var(--accent)); }
+  .tab .dot-c { width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
+  .tab.add { padding: 8px 10px; font-size: 16px; }
+  .tab.edit { margin-left: auto; padding: 8px 10px; }
+  .section-header.static { cursor: default; }
   .chip { border: 1px solid var(--line); background: var(--chip); color: var(--text); padding: 3px 10px; border-radius: 999px; font-size: 13px; }
   .chip.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   select, input, textarea { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
@@ -250,6 +259,7 @@
     </div>
   </header>
   <div id="authBanner"></div>
+  <nav id="listTabs" class="tabs" aria-label="Listen"></nav>
   <form id="quickForm" hidden><input id="quickInput" class="quick-capture" type="text" enterkeyhint="send" autocomplete="off" placeholder="Idee oder Task eintippen, Enter zum Speichern …"></form>
   <main id="view"></main>
 </div>
@@ -274,7 +284,7 @@ const ASSIGNEES = ['Caro', 'Hannes'];
 const ASSIGNEE_INITIAL = { Caro: 'C', Hannes: 'H' };
 const ASSIGNEE_COLOR = { Caro: '#e05297', Hannes: '#2f6fed' }; // nur fürs Avatar-Kürzel, unabhängig von Kategoriefarben
 const state = {
-  tasks: [], cfg: null, status: null, cats: new Set(), locs: new Set(), assignees: new Set(), showDone: false, sort: 'due', expanded: new Set(),
+  tasks: [], cfg: null, status: null, assignees: new Set(), lists: [{ id: 'tasks', name: 'Tasks', color: '9' }], listId: 'tasks', showDone: false, sort: 'due', expanded: new Set(),
   lastSyncAt: null, lastSyncError: null, online: true, syncHistory: [], selecting: false, selected: new Set(),
   todoOpen: true, laterOpen: false, // "Später" bewusst standardmäßig eingeklappt, weniger prominent als "Anstehend"
 };
@@ -359,7 +369,6 @@ const SORTS = {
   due: { label: 'Fälligkeit, dann Priorität', fn: (a, b) => dueCmp(a, b) || prioCmp(a, b) || a.title.localeCompare(b.title) },
   prio: { label: 'Priorität, dann Fälligkeit', fn: (a, b) => prioCmp(a, b) || dueCmp(a, b) || a.title.localeCompare(b.title) },
   title: { label: 'Titel A–Z', fn: (a, b) => a.title.localeCompare(b.title) },
-  cat: { label: 'Kategorie', fn: (a, b) => (a.category || '~').localeCompare(b.category || '~') || dueCmp(a, b) },
 };
 
 function sorted(list, sortFn = SORTS[state.sort].fn) {
@@ -376,16 +385,12 @@ function sorted(list, sortFn = SORTS[state.sort].fn) {
 // die Zuständigkeit, damit auf einen Blick sichtbar bleibt, wer den Task übernommen hat.
 function taskRow(t) {
   // Auswahlmodus (Mehrfachbearbeitung): die ganze Zeile schaltet nur noch die Auswahl um, statt Abhaken,
-  // Datum-Schnellwahl oder Detailansicht auszulösen. Kategorie/Ort werden mit angezeigt, damit man sieht,
-  // was man gerade massenhaft ändert.
+  // Datum-Schnellwahl oder Detailansicht auszulösen.
   if (state.selecting) {
     const sel = state.selected.has(t.id);
     return h('div', { class: 'task selectable' + (sel ? ' selected' : '') + (t.done ? ' done' : ''), onclick: () => toggleSelect(t.id) },
       h('span', { class: 'select-dot' }, sel ? '✓' : ''),
-      h('div', { class: 'main' },
-        h('div', { class: 'title' }, t.title),
-        (t.category || t.location) && h('div', { class: 'meta' },
-          t.category && h('span', { class: 'badge' }, t.category), t.location && h('span', { class: 'badge' }, t.location))),
+      h('div', { class: 'main' }, h('div', { class: 'title' }, t.title)),
       h('div', { class: 'right' }, dateChip(t), avatar(t.assignee) || h('span', { class: 'avatar-slot' })));
   }
   // Einzeilig wie Asanas Listenansicht: Häkchen, Titel, rechts Checklisten-Stand, Datum, Zuständigkeit.
@@ -478,8 +483,7 @@ function openBulkForm() {
   const date = h('input', { type: 'date' });
   const clearDate = h('input', { type: 'checkbox' });
   clearDate.addEventListener('change', () => { date.disabled = clearDate.checked; if (clearDate.checked) date.value = ''; });
-  const cat = h('select', {}, keepOpt('– unverändert –'), h('option', { value: '' }, '– keine –'), Object.keys(cfg.categories).map((c) => h('option', { value: c }, c)));
-  const loc = h('select', {}, keepOpt('– unverändert –'), h('option', { value: '' }, '– keiner –'), cfg.locations.map((l) => h('option', { value: l }, l)));
+  const listSel = h('select', {}, keepOpt('– unverändert –'), state.lists.map((l) => h('option', { value: l.id }, l.name)));
   const who = h('select', {}, keepOpt('– unverändert –'), h('option', { value: '' }, 'Niemand'), ASSIGNEES.map((a) => h('option', { value: a }, a)));
   const prio = h('select', {}, keepOpt('– unverändert –'), cfg.priorities.map((p) => h('option', { value: p }, p)));
   const bucket = h('select', {}, keepOpt('– unverändert –'), h('option', { value: 'todo' }, 'To Do'), h('option', { value: 'later' }, 'Später'));
@@ -494,11 +498,11 @@ function openBulkForm() {
     const patch = {};
     if (clearDate.checked) patch.due_date = null;
     else if (date.value) patch.due_date = date.value;
-    if (cat.value !== KEEP) patch.category = cat.value || null;
-    if (loc.value !== KEEP) patch.location = loc.value || null;
+    if (listSel.value !== KEEP) patch.list_id = listSel.value;
     if (who.value !== KEEP) patch.assignee = who.value || null;
     if (prio.value !== KEEP) patch.priority = prio.value;
     if (bucket.value !== KEEP) patch.bucket = bucket.value;
+    if (patch.list_id && patch.list_id !== OfflineLogic.MAIN_LIST) delete patch.bucket; // Inbox/Später gibt es nur in der Hauptliste
     if (inCal.value !== KEEP) patch.in_calendar = inCal.value === 'yes';
     if (!Object.keys(patch).length) { err.textContent = 'Nichts zum Ändern ausgewählt.'; return; }
     const { ok, errors } = await applyBulk(ids, patch);
@@ -513,9 +517,9 @@ function openBulkForm() {
     h('h3', {}, `${ids.length} Task${ids.length === 1 ? '' : 's'} bearbeiten`),
     h('div', { class: 'hint' }, 'Nur was du hier änderst, wird bei allen ausgewählten Tasks gesetzt – alles andere bleibt unverändert.'),
     field('Datum', date, h('label', { class: 'inline-check' }, clearDate, ' Datum entfernen')),
-    h('div', { class: 'row2' }, field('Kategorie', cat), field('Ort', loc)),
+    h('div', { class: 'row2' }, field('Liste', listSel), field('In Google Kalender', inCal)),
     h('div', { class: 'row2' }, field('Zuständigkeit', who), field('Priorität', prio)),
-    h('div', { class: 'row2' }, field('Liste', bucket), field('In Google Kalender', inCal)),
+    field('Status (nur Liste „' + (state.lists.find((l) => l.id === OfflineLogic.MAIN_LIST)?.name || 'Tasks') + '“)', bucket),
     err,
     h('div', { class: 'actions' },
       h('span'),
@@ -579,9 +583,9 @@ function doneToggle() {
   return h('label', {}, h('input', { type: 'checkbox', checked: state.showDone, onchange: (e) => { state.showDone = e.target.checked; render(); } }), ' Erledigte anzeigen');
 }
 
-function chipGroup(label, names, set, manageHref) {
+function chipGroup(label, names, set) {
   return h('div', { class: 'group' },
-    h('b', {}, label, manageHref && h('a', { class: 'manage-link', href: manageHref, title: `${label} verwalten` }, ' ✎')),
+    h('b', {}, label),
     names.map((n) => h('button', { class: 'chip' + (set.has(n) ? ' on' : ''), onclick: () => { set.has(n) ? set.delete(n) : set.add(n); render(); } }, n)));
 }
 
@@ -607,7 +611,8 @@ function initQuickCapture() {
     input.value = ''; // sofort leeren, damit man ohne Wartezeit den nächsten Eintrag tippen kann
     quickCaptureChain = quickCaptureChain.then(async () => {
       try {
-        await Offline.mutate('task', 'create', { input: { title, bucket: 'inbox' } });
+        // In der Hauptliste landet alles erst in der Inbox, in jeder anderen Liste direkt als Eintrag.
+        await Offline.mutate('task', 'create', { input: { title, list_id: state.listId, bucket: state.listId === OfflineLogic.MAIN_LIST ? 'inbox' : 'todo' } });
         await reload();
         kickSync();
       } catch (err) {
@@ -661,64 +666,141 @@ function sectionHeader(title, count, open, onToggle) {
 }
 
 function homePage() {
-  const openCount = state.tasks.filter((t) => (t.bucket || 'todo') === 'todo' && !t.done).length;
-  const laterList = state.tasks.filter((t) => (t.bucket || 'todo') === 'later');
+  const list = currentList();
+  const main = list.id === OfflineLogic.MAIN_LIST;
+  const mine = state.tasks.filter((t) => listOf(t) === list.id);
+  // Hauptliste: nur „Anstehend“ hier, Später/Inbox separat. Alle anderen Listen kennen nur einen einzigen Bereich.
+  const pool = main ? mine.filter((t) => (t.bucket || 'todo') === 'todo') : mine;
+  const laterList = main ? mine.filter((t) => (t.bucket || 'todo') === 'later') : [];
   const laterCount = laterList.filter((t) => !t.done).length;
-  const filtered = state.tasks.filter((t) =>
-    (t.bucket || 'todo') === 'todo' &&
-    (!state.cats.size || state.cats.has(t.category)) &&
-    (!state.locs.size || state.locs.has(t.location)) &&
-    (!state.assignees.size || state.assignees.has(t.assignee)));
+  const openCount = pool.filter((t) => !t.done).length;
+  const filtered = pool.filter((t) => !state.assignees.size || state.assignees.has(t.assignee));
+  const body = h('div', {},
+    h('div', { class: 'toolbar' },
+      h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) },
+        state.selecting ? 'Auswahl beenden' : '☑ Auswählen'),
+      h('span', { style: 'flex:1' }),
+      h('label', {}, 'Sortierung '),
+      h('select', { onchange: (e) => { state.sort = e.target.value; render(); } },
+        Object.entries(SORTS).map(([k, s]) => h('option', { value: k, selected: k === state.sort }, s.label))),
+      doneToggle()),
+    h('div', { class: 'filters' }, chipGroup('Wer', ASSIGNEES, state.assignees)),
+    taskList(filtered, mine.length ? 'Keine Tasks für diesen Filter.' : (main ? 'Noch keine Tasks. Tipp oben etwas ein!' : `„${list.name}“ ist noch leer. Tipp oben etwas ein!`)));
+  const open = !main || state.todoOpen;
   return h('div', {},
-    inboxSection(),
+    main && inboxSection(),
     h('div', { class: 'section' },
-      sectionHeader('Anstehend', openCount, state.todoOpen, () => { state.todoOpen = !state.todoOpen; render(); }),
-      state.todoOpen && h('div', {},
-        h('div', { class: 'toolbar' },
-          h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) },
-            state.selecting ? 'Auswahl beenden' : '☑ Auswählen'),
-          h('span', { style: 'flex:1' }),
-          h('label', {}, 'Sortierung '),
-          h('select', { onchange: (e) => { state.sort = e.target.value; render(); } },
-            Object.entries(SORTS).map(([k, s]) => h('option', { value: k, selected: k === state.sort }, s.label))),
-          doneToggle()),
-        h('div', { class: 'filters' },
-          chipGroup('Kategorie', Object.keys(state.cfg.categories), state.cats, '#/kategorien'),
-          chipGroup('Ort', state.cfg.locations, state.locs, '#/orte'),
-          chipGroup('Wer', ASSIGNEES, state.assignees)),
-        taskList(filtered, state.tasks.length ? 'Keine Tasks für diese Filter.' : 'Noch keine Tasks. Leg den ersten an!'))),
-    h('div', { class: 'section' },
+      main ? sectionHeader('Anstehend', openCount, state.todoOpen, () => { state.todoOpen = !state.todoOpen; render(); })
+        : h('div', { class: 'section-header static' }, h('strong', {}, `${list.name} (${openCount})`)),
+      open && body),
+    main && h('div', { class: 'section' },
       sectionHeader('Später', laterCount, state.laterOpen, () => { state.laterOpen = !state.laterOpen; render(); }),
       state.laterOpen && taskList(laterList, 'Nichts auf Später verschoben.', byCreatedAsc)),
-    state.selecting && selectBar(state.todoOpen ? sorted(filtered).map((t) => t.id) : []));
-}
-
-// Kategorien und Orte: gleiche Seite, beide mit Anlegen, Umbenennen und Löschen.
-const GROUP_TEXT = {
-  category: { newBtn: '＋ Neue Kategorie', none: 'Ohne Kategorie' },
-  location: { newBtn: '＋ Neuer Ort', none: 'Ohne Ort' },
-};
-
-function groupPage(title, names, key, colorOf) {
-  const groups = [...names, null].map((name) => ({ name, list: state.tasks.filter((t) => (t[key] || null) === name) }))
-    .filter((g) => g.name !== null || g.list.length);
-  return h('div', {},
-    h('a', { class: 'backlink', href: '#/' }, '← Zurück'),
-    h('h1', {}, title),
-    h('div', { class: 'toolbar' },
-      h('button', { class: 'btn primary', onclick: () => openGroupForm(key, null) }, GROUP_TEXT[key].newBtn),
-      h('span', { style: 'flex:1' }), doneToggle()),
-    groups.map((g) => h('section', { class: 'group-card', style: `--c:${colorOf(g.name)}` },
-      h('h2', {}, h('span', { class: 'swatch' }), g.name || GROUP_TEXT[key].none,
-        h('span', { class: 'count' }, `${g.list.filter((t) => !t.done).length} offen`),
-        g.name && h('button', { class: 'btn small', style: 'margin-left:auto', onclick: () => openGroupForm(key, g.name) }, '✎ Bearbeiten')),
-      taskList(g.list, 'Keine offenen Tasks.'))));
+    state.selecting && selectBar(open ? sorted(filtered).map((t) => t.id) : []));
 }
 
 // "Später"-Liste: bewusst nach Anlagedatum sortiert (älteste zuerst), nicht nach dem globalen Sortier-
 // Dropdown der Startseite – damit ältere, sonst leicht vergessene Punkte beim gelegentlichen Reinschauen
 // automatisch nach oben wandern (eine Art Mini-Weekly-Review).
 const byCreatedAsc = (a, b) => (a.created_at || '').localeCompare(b.created_at || '');
+
+// --- Listen (Tasks, Einkauf, Speiseplan, …) ---
+// Liegen als gemeinsame Einstellung im versteckten Konfigurations-Termin (settings.lists, siehe sync-core.js) und
+// wandern so zu allen Geräten; jeder Task trägt seine Liste in list_id. Ein Task mit unbekannter Liste (z. B. auf einem
+// anderen Gerät gelöscht) erscheint in der Hauptliste, statt zu verschwinden.
+const listOf = (t) => (state.lists.some((l) => l.id === t.list_id) ? t.list_id : OfflineLogic.MAIN_LIST);
+const currentList = () => state.lists.find((l) => l.id === state.listId) || state.lists[0];
+
+async function refreshLists() {
+  state.lists = (await Offline.getSettings()).lists;
+  if (!state.lists.some((l) => l.id === state.listId)) state.listId = OfflineLogic.MAIN_LIST;
+}
+
+function setList(id) {
+  state.listId = id;
+  try { localStorage.setItem('haus-tasks-list', id); } catch { /* ohne Speicher eben ohne Merken */ }
+  state.assignees.clear();
+  if (state.selecting) { state.selecting = false; state.selected.clear(); }
+  render();
+}
+
+function paintTabs() {
+  const nav = $('#listTabs');
+  const cur = currentList();
+  nav.replaceChildren(
+    ...state.lists.map((l) => h('button', { class: 'tab' + (l.id === cur.id ? ' on' : ''), style: `--c:${hex(l.color)}`, onclick: () => setList(l.id) },
+      h('span', { class: 'dot-c' }), l.name)),
+    h('button', { class: 'tab add', title: 'Neue Liste', onclick: () => openListForm(null) }, '＋'),
+    h('button', { class: 'tab edit', title: `Liste „${cur.name}“ bearbeiten`, onclick: () => openListForm(cur) }, '✎'));
+}
+
+// Anlegen / Umbenennen / Umfärben / Löschen einer Liste. Die Farbe bekommen neue Tasks der Liste (und damit ihre
+// Termine in Google); beim Umfärben ziehen die bestehenden Tasks mit.
+function openListForm(list) {
+  const isNew = !list;
+  const main = list?.id === OfflineLogic.MAIN_LIST;
+  const nameInput = h('input', { type: 'text', value: list?.name || '', required: true, maxLength: 30, placeholder: 'z. B. Einkaufsliste' });
+  const used = new Set(state.lists.map((l) => l.color));
+  const freeColor = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
+  const picker = makeSwatches(list?.color || freeColor);
+  const err = h('div', { class: 'error' });
+  const form = $('#form');
+
+  const save = async (lists) => {
+    await Offline.setSettings({ lists });
+    await refreshLists();
+    $('#dlg').close();
+    render();
+    syncNow(true); // Einstellungen stehen nicht in der Warteschlange, kickSync() täte nichts
+  };
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const name = nameInput.value.trim();
+    if (!name) return;
+    if (state.lists.some((l) => l.id !== list?.id && l.name.toLowerCase() === name.toLowerCase())) { err.textContent = 'Diese Liste gibt es schon.'; return; }
+    try {
+      if (isNew) {
+        const created = { id: Math.random().toString(36).slice(2, 8), name, color: picker.get() };
+        await save([...state.lists, created]);
+        setList(created.id);
+      } else {
+        const colorChanged = picker.get() !== list.color;
+        await save(state.lists.map((l) => (l.id === list.id ? { ...l, name, color: picker.get() } : l)));
+        if (colorChanged) {
+          for (const t of state.tasks.filter((x) => listOf(x) === list.id && !x.done)) await Offline.mutate('task', 'update', { id: t.id, patch: { color: picker.get() } });
+          await reload();
+          kickSync();
+        }
+      }
+    } catch (ex) { err.textContent = ex.message; }
+  };
+
+  async function remove() {
+    const mine = state.tasks.filter((t) => listOf(t) === list.id);
+    if (!confirm(`Liste „${list.name}“ löschen?${mine.length ? ` Die ${mine.length} Task${mine.length === 1 ? '' : 's'} darin werden ebenfalls gelöscht (auch die Kalendereinträge in Google).` : ''}`)) return;
+    try {
+      for (const t of mine) await Offline.mutate('task', 'delete', { id: t.id });
+      await save(state.lists.filter((l) => l.id !== list.id));
+      await reload();
+      kickSync();
+    } catch (ex) { err.textContent = ex.message; }
+  }
+
+  form.replaceChildren(
+    h('h3', {}, isNew ? 'Neue Liste' : 'Liste bearbeiten'),
+    h('div', { class: 'field' }, h('label', {}, 'Name'), nameInput),
+    h('div', { class: 'field' }, h('label', {}, 'Farbe (so erscheinen die Tasks im Google-Kalender)'), picker.el),
+    !isNew && h('div', { class: 'hint' }, 'Beim Umfärben ziehen die offenen Tasks der Liste mit.' + (main ? ' Die Hauptliste „' + list.name + '“ kann nicht gelöscht werden; nur dort gibt es Inbox und „Später“.' : '')),
+    err,
+    h('div', { class: 'actions' },
+      isNew || main ? h('span') : h('button', { type: 'button', class: 'btn danger', onclick: remove }, 'Liste löschen'),
+      h('div', { class: 'right' },
+        h('button', { type: 'button', class: 'btn', onclick: () => $('#dlg').close() }, 'Abbrechen'),
+        h('button', { type: 'submit', class: 'btn primary' }, 'Speichern'))));
+  $('#dlg').showModal();
+  nameInput.focus();
+}
 
 // Debug-Ansicht (#/debug): zeigt rohe lokale Daten, unabhängig von jeder Anzeige-/Filterlogik der
 // normalen Seiten – fürs Aufspüren von Sync-Problemen, bei denen die App selbst "erfolgreich" meldet,
@@ -761,14 +843,16 @@ function render() {
   if (!state.cfg) return;
   // Der Auswahlmodus gehört nur zur Startseite – beim Wechsel auf eine andere Seite sauber beenden.
   if (route && state.selecting) { state.selecting = false; state.selected.clear(); }
-  $('#quickForm').hidden = !!route; // Schnellerfassung nur auf der Startseite
-  if (route === 'debug') {
+  const onHome = route !== 'debug';
+  $('#quickForm').hidden = !onHome; // Schnellerfassung und Listen-Reiter nur auf der Startseite
+  $('#listTabs').hidden = !onHome;
+  if (!onHome) {
     renderDebugPage(view);
   } else {
-    view.replaceChildren(
-      route === 'kategorien' ? groupPage('Kategorien', Object.keys(state.cfg.categories), 'category', (n) => n ? hex(state.cfg.categories[n]) : '#9e9e9e')
-      : route === 'orte' ? groupPage('Orte', state.cfg.locations, 'location', () => 'var(--accent)')
-      : homePage());
+    paintTabs();
+    const main = state.listId === OfflineLogic.MAIN_LIST;
+    $('#quickInput').placeholder = main ? 'Idee oder Task eintippen, Enter zum Speichern …' : `Zu „${currentList().name}“ hinzufügen, Enter zum Speichern …`;
+    view.replaceChildren(homePage());
   }
   const inboxCount = state.tasks.filter((t) => (t.bucket || 'todo') === 'inbox').length;
   const badge = $('#inboxBadge');
@@ -815,70 +899,6 @@ function makeAssigneePicker(initial) {
     }, a ? avatar(a) : h('span', { class: 'avatar sm', style: '--ac:var(--line)' }, '–'), a || 'Niemand')));
   paint();
   return { el, get: () => value };
-}
-
-const GROUP_KIND = {
-  category: { cfgKey: 'categories', filter: () => state.cats, singular: 'Kategorie', article: 'Neue', placeholder: 'z. B. Reinigung' },
-  location: { cfgKey: 'locations', filter: () => state.locs, singular: 'Ort', article: 'Neuer', placeholder: 'z. B. Carport' },
-};
-
-// Anlegen/Bearbeiten/Löschen einer Kategorie (mit Farbe) oder eines Ortes.
-function openGroupForm(kind, name) {
-  const k = GROUP_KIND[kind];
-  const isNew = name == null;
-  const nameInput = h('input', { type: 'text', value: name || '', required: true, maxLength: 40, placeholder: k.placeholder });
-  const picker = kind === 'category' ? makeSwatches(isNew ? '9' : state.cfg.categories[name]) : null;
-  const err = h('div', { class: 'error' });
-  const form = $('#form');
-
-  // Neue Liste übernehmen und Filter bereinigen, die auf einen umbenannten/gelöschten Namen zeigten.
-  const applyList = (list) => {
-    state.cfg[k.cfgKey] = list;
-    const names = Array.isArray(list) ? list : Object.keys(list);
-    for (const n of [...k.filter()]) if (!names.includes(n)) k.filter().delete(n);
-  };
-
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    try {
-      const body = kind === 'category' ? { name: nameInput.value, color: picker.get() } : { name: nameInput.value };
-      // Nur die tatsächlich geänderten Felder senden, damit z. B. ein reines Umfärben nicht versehentlich
-      // einen zwischenzeitlich anderswo geänderten Namen zurücksetzt (und umgekehrt).
-      const original = kind === 'category' ? { name, color: state.cfg.categories[name] } : { name };
-      const payload = isNew ? body : diffPatch(original, body);
-      const list = await Offline.mutate(kind, isNew ? 'create' : 'update', isNew ? payload : { id: name, patch: payload });
-      applyList(list);
-      $('#dlg').close();
-      await reload();
-      kickSync();
-    } catch (ex) { err.textContent = ex.message; }
-  };
-
-  async function remove() {
-    const n = state.tasks.filter((t) => t[kind] === name).length;
-    if (!confirm(`${k.singular} „${name}“ löschen?${n ? ` Die ${n} Tasks bleiben erhalten, haben danach aber keine ${k.singular === 'Ort' ? 'Ortsangabe' : 'Kategorie'}.` : ''}`)) return;
-    try {
-      const list = await Offline.mutate(kind, 'delete', { id: name });
-      applyList(list);
-      $('#dlg').close();
-      await reload();
-      kickSync();
-    } catch (ex) { err.textContent = ex.message; }
-  }
-
-  form.replaceChildren(
-    h('h3', {}, isNew ? `${k.article} ${k.singular}` : `${k.singular} bearbeiten`),
-    h('div', { class: 'field' }, h('label', {}, 'Name'), nameInput),
-    picker && h('div', { class: 'field' }, h('label', {}, 'Standardfarbe für neue Tasks'), picker.el),
-    !isNew && h('div', { class: 'hint' }, (kind === 'category' ? 'Bestehende Tasks behalten ihre Farbe. ' : '') + 'Beim Umbenennen wandern die Tasks mit.'),
-    err,
-    h('div', { class: 'actions' },
-      isNew ? h('span') : h('button', { type: 'button', class: 'btn danger', onclick: remove }, 'Löschen'),
-      h('div', { class: 'right' },
-        h('button', { type: 'button', class: 'btn', onclick: () => $('#dlg').close() }, 'Abbrechen'),
-        h('button', { type: 'submit', class: 'btn primary' }, 'Speichern'))));
-  $('#dlg').showModal();
-  nameInput.focus();
 }
 
 // Editor für die Checkliste im Formular. Enter legt einen neuen Punkt an, Rücktaste in einem leeren Punkt entfernt ihn,
@@ -968,8 +988,7 @@ function makeChecklistEditor(initial) {
 
 function openForm(task) {
   const cfg = state.cfg;
-  const t = task || { title: '', due_date: '', due_time: '', due_end_time: '', category: '', location: '', assignee: null, priority: 'mittel', color: '9', notes: '', recurrence: null };
-  let colorTouched = !!task;
+  const t = task || { title: '', due_date: '', due_time: '', due_end_time: '', assignee: null, priority: 'mittel', notes: '', recurrence: null };
   const r = t.recurrence;
 
   const title = h('input', { type: 'text', value: t.title, required: true, placeholder: 'z. B. Steckdose im Flur setzen' });
@@ -993,19 +1012,16 @@ function openForm(task) {
   };
   date.addEventListener('change', syncTimeFields);
   time.addEventListener('change', () => { const had = !endTime.disabled; syncTimeFields(); if (time.value && !had) inCal.checked = true; });
-  const cat = h('select', {}, h('option', { value: '' }, '– keine –'), Object.keys(cfg.categories).map((c) => h('option', { value: c, selected: c === t.category }, c)));
-  const loc = h('select', {}, h('option', { value: '' }, '– keiner –'), cfg.locations.map((l) => h('option', { value: l, selected: l === t.location }, l)));
   const prio = h('select', {}, cfg.priorities.map((p) => h('option', { value: p, selected: p === t.priority }, p)));
   // Status = in welchem Bereich der Startseite der Task liegt (früher nur per Schnellknopf in der Zeile änderbar).
   const bucketSel = h('select', {}, [['todo', 'Anstehend'], ['later', 'Später'], ['inbox', 'Inbox (noch einsortieren)']]
     .map(([v, l]) => h('option', { value: v, selected: (t.bucket || 'todo') === v }, l)));
+  const listSel = h('select', {}, state.lists.map((l) => h('option', { value: l.id, selected: l.id === listOf(t) }, l.name)));
   const who = makeAssigneePicker(t.assignee);
   const notes = h('textarea', { rows: 3 }, t.notes || '');
   notes.value = t.notes || '';
   const chk = makeChecklistEditor(t.checklist || []);
 
-  const picker = makeSwatches(t.color, () => { colorTouched = true; });
-  cat.addEventListener('change', () => { if (!colorTouched && cat.value) picker.set(cfg.categories[cat.value]); });
 
   // Serie
   const recType = h('select', {},
@@ -1042,8 +1058,8 @@ function openForm(task) {
       : ty === 'monthly_day' ? { type: ty, interval: iv, day: Number(mday.value) } : { type: ty, interval: iv };
     const body = { title: title.value, due_date: date.value || null, due_time: date.value && time.value ? time.value : null,
       due_end_time: date.value && time.value && endTime.value ? endTime.value : null,
-      category: cat.value || null, location: loc.value || null,
-      assignee: who.get(), priority: prio.value, bucket: bucketSel.value, in_calendar: !!date.value && inCal.checked, color: picker.get(), notes: notes.value, checklist: chk.get(), recurrence };
+      assignee: who.get(), priority: prio.value, list_id: listSel.value, bucket: listSel.value === OfflineLogic.MAIN_LIST ? bucketSel.value : 'todo',
+      in_calendar: !!date.value && inCal.checked, notes: notes.value, checklist: chk.get(), recurrence };
     // Bei einer Bearbeitung nur die tatsächlich geänderten Felder senden (siehe diffPatch); beim Neuanlegen
     // gibt es noch keine Vorversion, da geht das komplette Formular raus.
     const payload = task ? diffPatch(task, body) : body;
@@ -1063,6 +1079,11 @@ function openForm(task) {
     (task.google_updated ? ` · ${new Date(task.google_updated).toLocaleString('de-DE')}` : ''));
 
   const field = (label, ...ctl) => h('div', { class: 'field' }, h('label', {}, label), ...ctl);
+  // Inbox/Anstehend/Später gibt es nur in der Hauptliste.
+  const statusField = field('Status', bucketSel);
+  const syncStatus = () => { statusField.hidden = listSel.value !== OfflineLogic.MAIN_LIST; };
+  listSel.addEventListener('change', syncStatus);
+  syncStatus();
   form.onsubmit = save;
   form.replaceChildren(
     h('h3', {}, task ? 'Task bearbeiten' : 'Neuer Task'),
@@ -1074,10 +1095,9 @@ function openForm(task) {
       h('small', {}, 'Ohne Haken bleibt der Task nur in der App sichtbar und wird unsichtbar zwischen den Geräten abgeglichen.')),
     field('Wiederholung', recType),
     recOpts,
-    h('div', { class: 'row2' }, field('Kategorie', cat), field('Ort', loc)),
     field('Zuständigkeit', who.el),
-    h('div', { class: 'row2' }, field('Priorität', prio), field('Status', bucketSel)),
-    field('Farbe', picker.el),
+    h('div', { class: 'row2' }, field('Priorität', prio), field('Liste', listSel)),
+    statusField,
     field('Notizen', notes),
     field('Checkliste (Enter = nächster Punkt, mehrzeiligen Text einfügen = mehrere Punkte)', chk.el),
     err,
@@ -1098,8 +1118,6 @@ const COLORS = {
   7: { name: 'Pfau', hex: '#46d6db' }, 8: { name: 'Graphit', hex: '#9e9e9e' }, 9: { name: 'Heidelbeere', hex: '#5484ed' },
   10: { name: 'Basilikum', hex: '#51b749' }, 11: { name: 'Tomate', hex: '#dc2127' },
 };
-const DEFAULT_CATEGORIES = { Elektrik: '5', Installation: '7', Innenausbau: '6', Möbel: '3', Garten: '10', Wartung: '9' };
-const DEFAULT_LOCATIONS = ['Garten', 'Wohnraum', 'Küche', 'Sanitär', 'Halle', 'Keller', 'Dachboden'];
 
 // --- Laden & Sync ---
 async function computeStatus() {
@@ -1164,6 +1182,7 @@ async function syncNow(silent) {
       state.online = true;
       const cfg = await Offline.getConfig();
       if (cfg) state.cfg = { ...state.cfg, categories: cfg.categories, locations: cfg.locations };
+      await refreshLists(); // Listen kommen mit der Konfiguration von anderen Geräten
       state.tasks = await Offline.getCachedTasks();
       state.lastSyncError = r.aborted ? 'Verbindung verloren' : null;
       if (!r.aborted) state.lastSyncAt = new Date();
@@ -1324,12 +1343,13 @@ async function boot() {
 
   let cfg = await Offline.getConfig();
   if (!cfg) {
-    // Ganz neuer, leerer Kalender: Vorgabe-Kategorien/-Orte anlegen, damit beim nächsten Sync alle
-    // Geräte dieselbe Ausgangsliste bekommen statt jedes für sich eine eigene zu erfinden.
-    cfg = { categories: DEFAULT_CATEGORIES, locations: DEFAULT_LOCATIONS, updated_at: new Date().toISOString() };
+    // Ganz neuer, leerer Kalender: Konfiguration anlegen, damit beim nächsten Sync alle Geräte dieselbe haben.
+    cfg = { categories: {}, locations: [], updated_at: new Date().toISOString() };
     await Offline.saveConfig(cfg);
   }
   state.cfg = { categories: cfg.categories, locations: cfg.locations, priorities: PRIORITIES, colors: COLORS };
+  try { state.listId = localStorage.getItem('haus-tasks-list') || OfflineLogic.MAIN_LIST; } catch { /* egal */ }
+  await refreshLists();
   await reload();
   syncNow(true); // Sync beim Öffnen
 }

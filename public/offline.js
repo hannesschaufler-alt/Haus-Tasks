@@ -124,6 +124,8 @@
 
   // Gemeinsame Einstellungen (gelten für alle Geräte, siehe SyncCore.DEFAULT_SETTINGS): liegen in derselben
   // Konfiguration wie Kategorien/Orte und wandern über dasselbe versteckte Google-Event mit.
+  // Farbe je Liste (für neue Tasks / Listenwechsel, siehe offline-logic.js)
+  const listColorsOf = (cfg) => Object.fromEntries(root.SyncCore.resolveSettings(cfg?.settings).lists.map((l) => [l.id, l.color]));
   async function getSettings() { return root.SyncCore.resolveSettings((await getConfig())?.settings); }
   async function setSettings(patch) {
     const cfg = await configOrEmpty();
@@ -141,14 +143,14 @@
 
     if (kind === 'task') {
       if (op === 'create') {
-        const { task, tasks } = L.createTask(raw, args.input, cfg.categories || {});
+        const { task, tasks } = L.createTask(raw, args.input, cfg.categories || {}, listColorsOf(cfg));
         await saveRawTasks(tasks);
         await enqueue({ kind, op, taskId: task.id, patch: args.input });
         return task;
       }
       if (op === 'update') {
         const before = raw.find((t) => t.id === args.id);
-        const { task, tasks } = L.updateTask(raw, args.id, args.patch, cfg.categories || {});
+        const { task, tasks } = L.updateTask(raw, args.id, args.patch, cfg.categories || {}, listColorsOf(cfg));
         await saveRawTasks(tasks);
         // updateTask() kann Felder selbst mitändern (z. B. die automatische Später→To-Do-Beförderung bei
         // einem neu gesetzten Datum, siehe offline-logic.js) – die müssen mit in den Sync, auch wenn sie

@@ -204,3 +204,26 @@ test('Kalender-Haken: Uhrzeit setzen schaltet ein (außer ausdrücklich anders),
   ({ task } = L.updateTask([task], task.id, { due_date: null }, {}));
   assert.strictEqual(task.in_calendar, false);
 });
+
+test('Listen: neue Tasks gehören zur Hauptliste „tasks“ und nehmen die Farbe ihrer Liste', () => {
+  const colors = { tasks: '9', einkauf: '10' };
+  const a = L.createTask([], { title: 'Brot' }, {}, colors).task;
+  assert.strictEqual(a.list_id, 'tasks');
+  assert.strictEqual(a.color, '9');
+  const b = L.createTask([], { title: 'Milch', list_id: 'einkauf', bucket: 'inbox' }, {}, colors).task;
+  assert.strictEqual(b.list_id, 'einkauf');
+  assert.strictEqual(b.color, '10');
+  assert.strictEqual(b.bucket, 'todo', 'Inbox gibt es nur in der Hauptliste');
+});
+
+test('Listen: Listenwechsel färbt um; außerhalb der Hauptliste ist alles „todo“, zurück bleibt der Status', () => {
+  const colors = { tasks: '9', einkauf: '10' };
+  let { task, tasks } = L.createTask([], { title: 'Idee', bucket: 'later' }, {}, colors);
+  ({ task, tasks } = L.updateTask(tasks, task.id, { list_id: 'einkauf' }, {}, colors));
+  assert.strictEqual(task.list_id, 'einkauf');
+  assert.strictEqual(task.color, '10');
+  assert.strictEqual(task.bucket, 'todo');
+  ({ task } = L.updateTask(tasks, task.id, { list_id: 'tasks' }, {}, colors));
+  assert.strictEqual(task.color, '9');
+  assert.strictEqual(task.bucket, 'todo');
+});

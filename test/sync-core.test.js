@@ -978,3 +978,41 @@ test('Lokale Tasks aus einer Version ohne Schalter werden beim nächsten Sync ab
   assert.match(remote.events.get(evId).start.date, HIDDEN_DAY);
   assert.strictEqual((await store.getRawTasks())[0].in_calendar, false);
 });
+
+// --- Listen (Tasks, Einkauf, …) ---
+
+test('Einstellungen: Hauptliste „Tasks“ gibt es immer, auch wenn gespeicherte Listen sie nicht enthalten oder kaputt sind', () => {
+  assert.deepStrictEqual(S.resolveSettings(undefined).lists, [{ id: 'tasks', name: 'Tasks', color: '9' }]);
+  const lists = S.resolveSettings({ lists: [{ id: 'k', name: 'Küche', color: '4' }, { kaputt: true }, null] }).lists;
+  assert.deepStrictEqual(lists.map((l) => l.id), ['tasks', 'k']);
+  assert.strictEqual(S.resolveSettings({ untimedAtEndOfDay: false }).untimedAtEndOfDay, false);
+});
+
+test('Liste eines Tasks wandert zum zweiten Gerät; Listenwechsel kommt dort an; Termine ohne Listenangabe gehören zur Hauptliste', async () => {
+  const a = fakeStore();
+  const b = fakeStore();
+  const t = await createLocal(a, { title: 'Milch', list_id: 'einkauf', in_calendar: false });
+  await S.syncWith(a, remote);
+  assert.strictEqual(taskEvents()[0].extendedProperties.private.list, 'einkauf');
+  await S.syncWith(b, remote);
+  assert.strictEqual((await b.getRawTasks())[0].list_id, 'einkauf');
+
+  await updateLocal(b, (await b.getRawTasks())[0].id, { list_id: 'tasks' });
+  await S.syncWith(b, remote);
+  await S.syncWith(a, remote);
+  assert.strictEqual((await a.getRawTasks())[0].list_id, 'tasks');
+
+  const body = taskEvents()[0];
+  remote.editDirect(body.id, { extendedProperties: { private: { ...body.extendedProperties.private, list: '' } } });
+  await S.syncWith(a, remote);
+  assert.strictEqual((await a.getRawTasks())[0].list_id, 'tasks');
+  assert.ok(t);
+});
+
+test('Listen werden über das Konfigurations-Event geteilt', async () => {
+  const a = fakeStore({ lists: [{ id: 'tasks', name: 'Tasks', color: '9' }, { id: 'einkauf', name: 'Einkauf', color: '10' }] });
+  const b = fakeStore();
+  await S.syncWith(a, remote);
+  await S.syncWith(b, remote);
+  assert.deepStrictEqual(S.resolveSettings((await b.getConfig()).settings).lists.map((l) => l.name), ['Tasks', 'Einkauf']);
+});

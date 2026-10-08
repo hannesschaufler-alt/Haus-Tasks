@@ -64,7 +64,10 @@
   //   25 Minuten lang, je 3 Tasks nebeneinander im selben Platz, 4 Plätze von hinten gezählt
   //   (Platz 0 = 23:34–23:59, 1 = 23:09–23:34, 2 = 22:44–23:09, 3 = 22:19–22:44). Das reicht für 12 Tasks pro
   //   Tag; weitere teilen sich die am wenigsten belegten Plätze (dann eben schmalere Spalten).
-  const DEFAULT_SETTINGS = { untimedAtEndOfDay: true };
+  // lists: die Listen (Tasks, Einkauf, …) mit Name und Farbe; „tasks“ ist die Hauptliste und gibt es immer.
+  const MAIN_LIST = 'tasks';
+  const DEFAULT_LISTS = [{ id: MAIN_LIST, name: 'Tasks', color: '9' }];
+  const DEFAULT_SETTINGS = { untimedAtEndOfDay: true, lists: DEFAULT_LISTS };
   const SLOT_COUNT = 4;
   const SLOT_PER_ROW = 3;
   const SLOT_MINUTES = 25;
@@ -102,7 +105,10 @@
   const isVisible = (t) => !!(t.due_date && (t.in_calendar === undefined ? t.due_time : t.in_calendar));
 
   function resolveSettings(raw) {
-    return { ...DEFAULT_SETTINGS, ...(raw && typeof raw === 'object' ? raw : {}) };
+    const s = { ...DEFAULT_SETTINGS, ...(raw && typeof raw === 'object' ? raw : {}) };
+    let lists = Array.isArray(s.lists) ? s.lists.filter((l) => l && typeof l.id === 'string' && l.id && typeof l.name === 'string') : [];
+    if (!lists.some((l) => l.id === MAIN_LIST)) lists = [...DEFAULT_LISTS, ...lists]; // Hauptliste fehlt nie, auch wenn ein Gerät sie versehentlich verliert
+    return { ...s, lists };
   }
 
   // Bekommt der Task im Kalender einen Platz am Tagesende? Nur bei sichtbaren Tasks mit echtem Datum und ohne
@@ -186,6 +192,7 @@
           noTime: slot ? 'true' : '', // Platz am Tagesende statt echter Uhrzeit (siehe usesTimeSlot)
           slot: slot && Number.isInteger(t.slot_index) ? String(t.slot_index) : '', // welcher Platz (siehe withSlotIndex)
           bucket: t.bucket || '', // GTD-Status (inbox/todo/later), siehe offline-logic.js
+          list: t.list_id || MAIN_LIST, // Liste (siehe resolveSettings)
         },
       },
     };
@@ -233,7 +240,7 @@
         time_slot: false, slot_index: null, done, color,
         category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
         notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
-        bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo',
+        bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST,
         in_calendar: false, cal_migrate: false, hidden_date: isHiddenDate(startDate) ? startDate : null,
       };
     }
@@ -256,7 +263,7 @@
       title, due_date, due_time, due_end_time, time_slot, slot_index, done, color,
       category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
       notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
-      bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo',
+      bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST,
       in_calendar, cal_migrate: own && p.cal !== 'show' && !in_calendar, hidden_date: null,
     };
   }
