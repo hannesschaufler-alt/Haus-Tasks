@@ -282,6 +282,11 @@
 <script src="offline.js"></script>
 <script>
 const $ = (s, r = document) => r.querySelector(s);
+// Feste Listen-IDs (gleich wie in offline-logic.js). Hier bewusst nicht aus OfflineLogic gelesen: lädt der Browser nach einem
+// Update noch eine ältere offline-logic.js, wäre der Wert undefined und eine damit angelegte Liste würde stillschweigend
+// verworfen.
+const MAIN_LIST = 'tasks';
+const LATER_LIST = 'spaeter';
 const WEEKDAYS = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
 const PRIO_RANK = { hoch: 0, mittel: 1, niedrig: 2 };
 const ASSIGNEES = ['Caro', 'Hannes'];
@@ -506,7 +511,7 @@ function openBulkForm() {
     if (who.value !== KEEP) patch.assignee = who.value || null;
     if (prio.value !== KEEP) patch.priority = prio.value;
     if (bucket.value !== KEEP) patch.bucket = bucket.value;
-    if (patch.list_id && patch.list_id !== OfflineLogic.MAIN_LIST) delete patch.bucket; // Inbox gibt es nur in der Hauptliste
+    if (patch.list_id && patch.list_id !== MAIN_LIST) delete patch.bucket; // Inbox gibt es nur in der Hauptliste
     if (inCal.value !== KEEP) patch.in_calendar = inCal.value === 'yes';
     if (!Object.keys(patch).length) { err.textContent = 'Nichts zum Ändern ausgewählt.'; return; }
     const { ok, errors } = await applyBulk(ids, patch);
@@ -523,7 +528,7 @@ function openBulkForm() {
     field('Datum', date, h('label', { class: 'inline-check' }, clearDate, ' Datum entfernen')),
     h('div', { class: 'row2' }, field('Liste', listSel), field('In Google Kalender', inCal)),
     h('div', { class: 'row2' }, field('Zuständigkeit', who), field('Priorität', prio)),
-    field('Status (nur Liste „' + (state.lists.find((l) => l.id === OfflineLogic.MAIN_LIST)?.name || 'Tasks') + '“)', bucket),
+    field('Status (nur Liste „' + (state.lists.find((l) => l.id === MAIN_LIST)?.name || 'Tasks') + '“)', bucket),
     err,
     h('div', { class: 'actions' },
       h('span'),
@@ -555,24 +560,28 @@ async function toggleDone(t, done) {
 // Schnelles Verschieben zwischen Hauptliste und der Liste „Später“, direkt in der Zeile statt über die Detailansicht.
 function listMoveBadge(t) {
   const list = listOf(t);
-  if (list === OfflineLogic.MAIN_LIST) return h('button', { class: 'badge list-move', title: 'In die Liste „Später“ verschieben', onclick: (e) => { e.stopPropagation(); moveToLater(t); } }, '→ Später');
-  if (list === OfflineLogic.LATER_LIST) return h('button', { class: 'badge list-move', title: 'Zurück in die Hauptliste', onclick: (e) => { e.stopPropagation(); moveBucket(t, { list_id: OfflineLogic.MAIN_LIST }); } }, '↑ Tasks');
+  if (list === MAIN_LIST) return h('button', { class: 'badge list-move', title: 'In die Liste „Später“ verschieben', onclick: (e) => { e.stopPropagation(); moveToLater(t); } }, '→ Später');
+  if (list === LATER_LIST) return h('button', { class: 'badge list-move', title: 'Zurück in die Hauptliste', onclick: (e) => { e.stopPropagation(); moveBucket(t, { list_id: MAIN_LIST }); } }, '↑ Tasks');
   return null;
 }
 
 // Die Liste „Später“ gibt es nur, wenn sie jemand braucht: beim ersten Verschieben (oder bei der Umstellung alter
 // „Später“-Tasks) wird sie angelegt – mit fester ID, damit mehrere Geräte nicht jeweils eine eigene erfinden.
-async function ensureLaterList() {
-  if (state.lists.some((l) => l.id === OfflineLogic.LATER_LIST)) return;
-  const used = new Set(state.lists.map((l) => l.color));
-  const color = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
-  await Offline.setSettings({ lists: [...state.lists, { id: OfflineLogic.LATER_LIST, name: 'Später', color }] });
-  await refreshLists();
+async function ensureLaterList(extraSettings = {}) {
+  if (!state.lists.some((l) => l.id === LATER_LIST)) {
+    const used = new Set(state.lists.map((l) => l.color));
+    const color = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
+    await Offline.setSettings({ lists: [...state.lists, { id: LATER_LIST, name: 'Später', color }], ...extraSettings });
+    await refreshLists();
+    if (!state.lists.some((l) => l.id === LATER_LIST)) throw new Error('Die Liste „Später“ konnte nicht angelegt werden.');
+  } else if (Object.keys(extraSettings).length) {
+    await Offline.setSettings(extraSettings);
+  }
 }
 async function moveToLater(t) {
   try {
     await ensureLaterList();
-    await Offline.mutate('task', 'update', { id: t.id, patch: { list_id: OfflineLogic.LATER_LIST, bucket: 'todo' } });
+    await Offline.mutate('task', 'update', { id: t.id, patch: { list_id: LATER_LIST, bucket: 'todo' } });
     await reload();
     kickSync();
     syncNow(true); // neue Liste = geänderte Einstellung, steht nicht in der Warteschlange
@@ -587,13 +596,17 @@ async function migrateLater() {
   migratingLater = true;
   try {
     const old = state.tasks.filter((t) => t.bucket === 'later');
-    if (!old.length) return;
+    // Die Liste „Später“ gibt es nach der Umstellung einmalig immer (auch leer); wer sie danach löscht, bekommt sie nicht
+    // gegen seinen Willen zurück (laterMigrated, gemeinsame Einstellung).
+    const migrated = (await Offline.getSettings()).laterMigrated;
+    if (!migrated) await ensureLaterList({ laterMigrated: true });
+    if (!old.length) { if (!migrated) syncNow(true); return; }
     await ensureLaterList();
-    for (const t of old) await Offline.mutate('task', 'update', { id: t.id, patch: { list_id: OfflineLogic.LATER_LIST, bucket: 'todo' } });
+    for (const t of old) await Offline.mutate('task', 'update', { id: t.id, patch: { list_id: LATER_LIST, bucket: 'todo' } });
     await reload();
     kickSync();
     syncNow(true);
-  } catch (e) { /* beim nächsten Laden/Sync erneut */ } finally { migratingLater = false; }
+  } catch (e) { toast('Umstellung auf die Liste „Später“ fehlgeschlagen: ' + e.message); } finally { migratingLater = false; }
 }
 
 async function moveBucket(t, bucket) {
@@ -652,7 +665,7 @@ function initQuickCapture() {
     quickCaptureChain = quickCaptureChain.then(async () => {
       try {
         // In der Hauptliste landet alles erst in der Inbox, in jeder anderen Liste direkt als Eintrag.
-        await Offline.mutate('task', 'create', { input: { title, list_id: state.listId, bucket: state.listId === OfflineLogic.MAIN_LIST ? 'inbox' : 'todo' } });
+        await Offline.mutate('task', 'create', { input: { title, list_id: state.listId, bucket: state.listId === MAIN_LIST ? 'inbox' : 'todo' } });
         await reload();
         kickSync();
       } catch (err) {
@@ -707,13 +720,13 @@ function sectionHeader(title, count, open, onToggle) {
 
 function homePage() {
   const list = currentList();
-  const main = list.id === OfflineLogic.MAIN_LIST;
+  const main = list.id === MAIN_LIST;
   const mine = state.tasks.filter((t) => listOf(t) === list.id);
   // Hauptliste: „Anstehend“, die Inbox steht separat darüber. Alle anderen Listen (auch „Später“) kennen nur einen Bereich.
   const pool = main ? mine.filter((t) => (t.bucket || 'todo') !== 'inbox') : mine;
   // Die Liste „Später“ ist bewusst nach Anlagedatum sortiert (älteste zuerst), nicht nach dem Sortier-Dropdown – damit
   // ältere, sonst leicht vergessene Punkte beim gelegentlichen Reinschauen automatisch nach oben wandern.
-  const sortFn = list.id === OfflineLogic.LATER_LIST ? byCreatedAsc : undefined;
+  const sortFn = list.id === LATER_LIST ? byCreatedAsc : undefined;
   const openCount = pool.filter((t) => !t.done).length;
   const filtered = pool.filter((t) => !state.assignees.size || state.assignees.has(t.assignee));
   const body = h('div', {},
@@ -746,12 +759,12 @@ const byCreatedAsc = (a, b) => (a.created_at || '').localeCompare(b.created_at |
 // Liegen als gemeinsame Einstellung im versteckten Konfigurations-Termin (settings.lists, siehe sync-core.js) und
 // wandern so zu allen Geräten; jeder Task trägt seine Liste in list_id. Ein Task mit unbekannter Liste (z. B. auf einem
 // anderen Gerät gelöscht) erscheint in der Hauptliste, statt zu verschwinden.
-const listOf = (t) => (state.lists.some((l) => l.id === t.list_id) ? t.list_id : OfflineLogic.MAIN_LIST);
+const listOf = (t) => (state.lists.some((l) => l.id === t.list_id) ? t.list_id : MAIN_LIST);
 const currentList = () => state.lists.find((l) => l.id === state.listId) || state.lists[0];
 
 async function refreshLists() {
   state.lists = (await Offline.getSettings()).lists;
-  if (!state.lists.some((l) => l.id === state.listId)) state.listId = OfflineLogic.MAIN_LIST;
+  if (!state.lists.some((l) => l.id === state.listId)) state.listId = MAIN_LIST;
 }
 
 function setList(id) {
@@ -842,7 +855,7 @@ function enableTabDrag(tab) {
 // Termine in Google); beim Umfärben ziehen die bestehenden Tasks mit.
 function openListForm(list) {
   const isNew = !list;
-  const main = list?.id === OfflineLogic.MAIN_LIST;
+  const main = list?.id === MAIN_LIST;
   const nameInput = h('input', { type: 'text', value: list?.name || '', required: true, maxLength: 30, placeholder: 'z. B. Einkaufsliste' });
   const used = new Set(state.lists.map((l) => l.color));
   const freeColor = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
@@ -954,7 +967,7 @@ function render() {
     renderDebugPage(view);
   } else {
     paintTabs();
-    const main = state.listId === OfflineLogic.MAIN_LIST;
+    const main = state.listId === MAIN_LIST;
     $('#quickInput').placeholder = main ? 'Idee oder Task eintippen, Enter zum Speichern …' : `Zu „${currentList().name}“ hinzufügen, Enter zum Speichern …`;
     view.replaceChildren(homePage());
   }
@@ -1162,7 +1175,7 @@ function openForm(task) {
       : ty === 'monthly_day' ? { type: ty, interval: iv, day: Number(mday.value) } : { type: ty, interval: iv };
     const body = { title: title.value, due_date: date.value || null, due_time: date.value && time.value ? time.value : null,
       due_end_time: date.value && time.value && endTime.value ? endTime.value : null,
-      assignee: who.get(), priority: prio.value, list_id: listSel.value, bucket: listSel.value === OfflineLogic.MAIN_LIST ? bucketSel.value : 'todo',
+      assignee: who.get(), priority: prio.value, list_id: listSel.value, bucket: listSel.value === MAIN_LIST ? bucketSel.value : 'todo',
       in_calendar: !!date.value && inCal.checked, notes: notes.value, checklist: chk.get(), recurrence };
     // Bei einer Bearbeitung nur die tatsächlich geänderten Felder senden (siehe diffPatch); beim Neuanlegen
     // gibt es noch keine Vorversion, da geht das komplette Formular raus.
@@ -1185,7 +1198,7 @@ function openForm(task) {
   const field = (label, ...ctl) => h('div', { class: 'field' }, h('label', {}, label), ...ctl);
   // Inbox/Anstehend gibt es nur in der Hauptliste.
   const statusField = field('Status', bucketSel);
-  const syncStatus = () => { statusField.hidden = listSel.value !== OfflineLogic.MAIN_LIST; };
+  const syncStatus = () => { statusField.hidden = listSel.value !== MAIN_LIST; };
   listSel.addEventListener('change', syncStatus);
   syncStatus();
   form.onsubmit = save;
@@ -1453,7 +1466,7 @@ async function boot() {
     await Offline.saveConfig(cfg);
   }
   state.cfg = { categories: cfg.categories, locations: cfg.locations, priorities: PRIORITIES, colors: COLORS };
-  try { state.listId = localStorage.getItem('haus-tasks-list') || OfflineLogic.MAIN_LIST; } catch { /* egal */ }
+  try { state.listId = localStorage.getItem('haus-tasks-list') || MAIN_LIST; } catch { /* egal */ }
   await refreshLists();
   await reload();
   migrateLater();

@@ -23,6 +23,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/configure-pages@v5
+      # Skripte mit Versionsnummer (Commit) einbinden: eine neue Version ist damit eine neue Adresse und kann nicht mit einer
+      # älteren, noch im Browser-Cache liegenden Datei vermischt werden (sonst passte index.html zu alter offline-logic.js).
+      - name: Skript-Adressen versionieren
+        run: |
+          sed -i "s|<script src=\"\([a-z-]*\.js\)\"></script>|<script src=\"\1?v=${GITHUB_SHA::7}\"></script>|" public/index.html
       # Nur der public/-Ordner (die eigentliche Web-App) wird veröffentlicht, nicht das ganze Repo.
       - uses: actions/upload-pages-artifact@v4
         with:
