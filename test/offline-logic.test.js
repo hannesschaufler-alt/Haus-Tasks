@@ -263,3 +263,24 @@ test('Ausdrücklicher Anlegezeitpunkt wird übernommen, ein ungültiger ignorier
   assert.strictEqual(L.createTask([], { title: 'A', created_at: '2031-01-02T03:04:05.006Z' }, CATS).task.created_at, '2031-01-02T03:04:05.006Z');
   assert.ok(L.createTask([], { title: 'B', created_at: 'quatsch' }, CATS).task.created_at.startsWith(new Date().getFullYear().toString()));
 });
+
+test('Manuelle Reihenfolge: nur der verschobene Task bekommt eine neue Position (Mittelwert der Nachbarn)', () => {
+  const mk = (id, order) => ({ id, order });
+  // a b c d  → c wird zwischen a und b gezogen
+  assert.deepStrictEqual(L.computeOrderUpdates([mk('a', 1000), mk('c', 3000), mk('b', 2000), mk('d', 4000)], 'c'), [{ id: 'c', order: 1500 }]);
+  // ganz nach oben / ganz nach unten
+  assert.deepStrictEqual(L.computeOrderUpdates([mk('d', 4000), mk('a', 1000), mk('b', 2000)], 'd'), [{ id: 'd', order: 1000 - 1024 }]);
+  assert.deepStrictEqual(L.computeOrderUpdates([mk('b', 2000), mk('c', 3000), mk('a', 1000)], 'a'), [{ id: 'a', order: 3000 + 1024 }]);
+  // Reihenfolge stimmt schon: nichts zu tun
+  assert.deepStrictEqual(L.computeOrderUpdates([mk('a', 1), mk('b', 2)], 'b'), []);
+});
+
+test('Manuelle Reihenfolge: Tasks ohne Position, zu kleine Lücke oder widersprüchliche Werte nummerieren alle neu', () => {
+  const neu = L.computeOrderUpdates([{ id: 'n', order: null }, { id: 'a', order: 5 }, { id: 'b', order: 6 }], 'n');
+  assert.deepStrictEqual(neu.map((u) => u.id), ['n', 'a', 'b']);
+  assert.deepStrictEqual(neu.map((u) => u.order), [1024, 2048, 3072]);
+  const eng = L.computeOrderUpdates([{ id: 'a', order: 1 }, { id: 'x', order: 9 }, { id: 'b', order: 1 + 1e-9 }], 'x');
+  assert.deepStrictEqual(eng.map((u) => u.order), [1024, 2048, 3072]);
+  const wid = L.computeOrderUpdates([{ id: 'a', order: 5 }, { id: 'x', order: 1 }, { id: 'b', order: 3 }], 'x');
+  assert.ok(wid.length >= 2, 'bei Widerspruch alle neu');
+});

@@ -45,6 +45,7 @@
       priority: PRIORITIES.includes(input.priority) ? input.priority : 'mittel',
       bucket: list_id !== MAIN_LIST ? 'todo' : BUCKETS.includes(input.bucket) ? input.bucket : 'todo',
       list_id,
+      order: Number.isFinite(input.order) ? input.order : null, // Position bei manueller Sortierung (siehe computeOrderUpdates)
       // „In Google Kalender anzeigen“: aus, außer der Task hat eine Uhrzeit (ein Termin gehört in den Kalender).
       // Ohne Datum gibt es nichts anzuzeigen. Siehe sync-core.js (HIDDEN_EPOCH).
       in_calendar: !!input.due_date && (input.in_calendar === undefined ? !!input.due_time : !!input.in_calendar),
@@ -182,6 +183,25 @@
     return { add, already: unique - add.length };
   }
 
+  // Manuelle Reihenfolge: jeder Task kann eine Position (`order`, aufsteigend) haben. Tasks ohne Position (neu) stehen oben.
+  // Nach dem Verschieben eines Tasks (`seq` = offene Tasks in der neuen Anzeige-Reihenfolge) wird nur dieser eine Task
+  // zwischen seine neuen Nachbarn gesetzt (Mittelwert) – nur wenn das nicht geht (noch Tasks ohne Position, Lücke zu klein,
+  // widersprüchliche Positionen) bekommen alle neu durchnummerierte Positionen. Ergebnis: [{ id, order }, …].
+  const ORDER_STEP = 1024;
+  function computeOrderUpdates(seq, movedId) {
+    const renumber = () => seq.map((t, i) => ({ id: t.id, order: (i + 1) * ORDER_STEP })).filter((u, i) => seq[i].order !== u.order);
+    if (!seq.every((t) => Number.isFinite(t.order))) return renumber();
+    const i = seq.findIndex((t) => t.id === movedId);
+    if (i < 0) return [];
+    const prev = i > 0 ? seq[i - 1].order : null;
+    const next = i < seq.length - 1 ? seq[i + 1].order : null;
+    const cur = seq[i].order;
+    if ((prev === null || cur > prev) && (next === null || cur < next)) return []; // Reihenfolge stimmt schon
+    const o = prev === null && next === null ? cur : prev === null ? next - ORDER_STEP : next === null ? prev + ORDER_STEP : (prev + next) / 2;
+    if ((prev !== null && !(o > prev)) || (next !== null && !(o < next)) || (prev !== null && next !== null && next - prev < 1e-6)) return renumber();
+    return [{ id: movedId, order: o }];
+  }
+
   const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
   function cleanName(raw) {
     const name = String(raw ?? '').trim();
@@ -239,6 +259,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, shoppingItems,
+    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, shoppingItems, computeOrderUpdates,
   };
 });

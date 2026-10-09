@@ -158,6 +158,11 @@
   .task input[type=checkbox]:checked { border-color: var(--accent); background: var(--accent); }
   .task input[type=checkbox]:checked::before { transform: scale(1); }
   .task .main { min-width: 0; cursor: pointer; }
+  .task.manual { grid-template-columns: auto auto 1fr auto; }
+  .task.manual .chk-wrap { grid-column: 3 / -1; }
+  .task.dragging { position: relative; z-index: 3; background: var(--chip); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+  .row-drag { border: 0; background: none; color: var(--muted); cursor: grab; touch-action: none; padding: 4px 2px; margin: -4px 0; font-size: 16px; line-height: 1; user-select: none; -webkit-user-select: none; }
+  .row-drag:active { cursor: grabbing; }
   .task .chk-wrap { grid-column: 2 / -1; }
   .task .chk-wrap .chk-list { margin: 2px 0 2px; }
   .title { font-weight: 500; overflow-wrap: anywhere; line-height: 1.3; }
@@ -303,6 +308,7 @@ const ASSIGNEE_COLOR = { Caro: '#e05297', Hannes: '#2f6fed' }; // nur fürs Avat
 const state = {
   tasks: [], cfg: null, status: null, assignees: new Set(), lists: [{ id: 'tasks', name: 'Tasks', color: '9' }], listId: 'tasks', showDone: false, sort: 'due', expanded: new Set(),
   lastSyncAt: null, lastSyncError: null, online: true, syncHistory: [], selecting: false, selected: new Set(),
+  sortByList: (() => { try { return JSON.parse(localStorage.getItem('haus-tasks-sorts') || '{}'); } catch { return {}; } })(),
   todoOpen: true, laterOpen: false, // "Später" bewusst standardmäßig eingeklappt, weniger prominent als "Anstehend"
 };
 
@@ -384,13 +390,33 @@ const dueCmp = (a, b) => (a.due_date || '').localeCompare(b.due_date || '');
 // Neueste zuerst. Neu eingetragene Tasks haben noch kein Datum und sollen bei der Standardsortierung ganz oben stehen.
 const newestCmp = (a, b) => (b.created_at || '').localeCompare(a.created_at || '');
 const prioCmp = (a, b) => PRIO_RANK[a.priority] - PRIO_RANK[b.priority];
+// Manuelle Reihenfolge (per Ziehen): Tasks mit Position aufsteigend, Tasks ohne Position (neu) oben, neueste zuerst.
+const manualCmp = (a, b) => {
+  const ao = Number.isFinite(a.order), bo = Number.isFinite(b.order);
+  if (ao && bo) return a.order - b.order || a.title.localeCompare(b.title);
+  if (ao !== bo) return ao ? 1 : -1;
+  return newestCmp(a, b) || a.title.localeCompare(b.title);
+};
 const SORTS = {
+  manual: { label: 'Manuell (per Ziehen)', fn: manualCmp },
+  age: { label: 'Anlagedatum (älteste zuerst)', fn: (a, b) => byCreatedAsc(a, b) },
   due: { label: 'Fälligkeit, Neue zuerst', fn: (a, b) => dueCmp(a, b) || (a.due_date ? 0 : newestCmp(a, b)) || prioCmp(a, b) || a.title.localeCompare(b.title) },
   prio: { label: 'Priorität, dann Fälligkeit', fn: (a, b) => prioCmp(a, b) || dueCmp(a, b) || a.title.localeCompare(b.title) },
   title: { label: 'Titel A–Z', fn: (a, b) => a.title.localeCompare(b.title) },
 };
 
-function sorted(list, sortFn = SORTS[state.sort].fn) {
+// Sortierung gilt je Liste und wird gemerkt. Vorgabe: Einkaufsliste manuell, „Später“ nach Alter, sonst Fälligkeit.
+function defaultSortKey(list) {
+  if (list.id === LATER_LIST) return 'age';
+  if (shoppingList()?.id === list.id) return 'manual';
+  return 'due';
+}
+function currentSortKey() {
+  const list = currentList();
+  const key = state.sortByList[list.id];
+  return SORTS[key] ? key : defaultSortKey(list);
+}
+function sorted(list, sortFn = SORTS[currentSortKey()].fn) {
   const open = list.filter((t) => !t.done).sort(sortFn);
   const done = list.filter((t) => t.done).sort((a, b) => (b.done_at || '').localeCompare(a.done_at || ''));
   return state.showDone ? [...open, ...done] : open;
@@ -402,7 +428,7 @@ function sorted(list, sortFn = SORTS[state.sort].fn) {
 // über Sortierung und Filter lässt sich trotzdem gezielt einschränken.
 // Löschen gibt's nur noch in der Detailansicht (siehe openForm) – hier an derselben Stelle stattdessen
 // die Zuständigkeit, damit auf einen Blick sichtbar bleibt, wer den Task übernommen hat.
-function taskRow(t) {
+function taskRow(t, { handle = false } = {}) {
   // Auswahlmodus (Mehrfachbearbeitung): die ganze Zeile schaltet nur noch die Auswahl um, statt Abhaken,
   // Datum-Schnellwahl oder Detailansicht auszulösen.
   if (state.selecting) {
@@ -413,7 +439,8 @@ function taskRow(t) {
       h('div', { class: 'right' }, dateChip(t), avatar(t.assignee) || h('span', { class: 'avatar-slot' })));
   }
   // Einzeilig wie Asanas Listenansicht: Häkchen, Titel, rechts Checklisten-Stand, Datum, Zuständigkeit.
-  return h('div', { class: 'task' + (t.done ? ' done' : '') },
+  return h('div', { class: 'task' + (handle ? ' manual' : '') + (t.done ? ' done' : ''), 'data-id': t.id },
+    handle && h('button', { type: 'button', class: 'row-drag', title: 'Ziehen zum Sortieren' }, '⠿'),
     h('input', { type: 'checkbox', checked: t.done, title: t.done ? 'Wieder öffnen' : 'Abhaken', onchange: (e) => toggleDone(t, e.target.checked) }),
     h('div', { class: 'main', onclick: () => openForm(t) },
       h('div', { class: 'title' }, t.title)),
@@ -667,9 +694,30 @@ async function removeTask(t) {
   } catch (e) { toast(e.message); }
 }
 
+// Bei manueller Sortierung bekommt jede offene Zeile einen Griff zum Ziehen (nicht im Auswahlmodus und nicht, solange der
+// Filter „Wer“ aktiv ist – sonst würden ausgeblendete Tasks beim Neunummerieren durcheinanderkommen).
 function taskList(list, emptyText, sortFn) {
   const rows = sorted(list, sortFn);
-  return h('div', { class: 'list' }, rows.length ? rows.map(taskRow) : h('div', { class: 'empty' }, emptyText));
+  const manual = !sortFn && currentSortKey() === 'manual' && !state.selecting && !state.assignees.size;
+  const el = h('div', { class: 'list' }, rows.length ? rows.map((t) => taskRow(t, { handle: manual && !t.done })) : h('div', { class: 'empty' }, emptyText));
+  if (manual) {
+    for (const row of el.querySelectorAll('.task.manual')) {
+      attachSort({ item: row, handle: row.querySelector('.row-drag'), container: el, itemSel: '.task.manual', axis: 'y', mode: 'now',
+        onDone: () => commitManualOrder(el, row.dataset.id) });
+    }
+  }
+  return el;
+}
+
+async function commitManualOrder(container, movedId) {
+  const seq = [...container.querySelectorAll('.task.manual')].map((e) => state.tasks.find((t) => t.id === e.dataset.id)).filter(Boolean);
+  const updates = OfflineLogic.computeOrderUpdates(seq, movedId);
+  if (!updates.length) { render(); return; }
+  try {
+    for (const u of updates) await Offline.mutate('task', 'update', { id: u.id, patch: { order: u.order } });
+    await reload();
+    kickSync();
+  } catch (e) { toast(e.message); reload(); }
 }
 
 // --- Seiten ---
@@ -765,9 +813,6 @@ function homePage() {
   const mine = state.tasks.filter((t) => listOf(t) === list.id);
   // Hauptliste: „Anstehend“, die Inbox steht separat darüber. Alle anderen Listen (auch „Später“) kennen nur einen Bereich.
   const pool = main ? mine.filter((t) => (t.bucket || 'todo') !== 'inbox') : mine;
-  // Die Liste „Später“ ist bewusst nach Anlagedatum sortiert (älteste zuerst), nicht nach dem Sortier-Dropdown – damit
-  // ältere, sonst leicht vergessene Punkte beim gelegentlichen Reinschauen automatisch nach oben wandern.
-  const sortFn = list.id === LATER_LIST ? byCreatedAsc : undefined;
   const openCount = pool.filter((t) => !t.done).length;
   const filtered = pool.filter((t) => !state.assignees.size || state.assignees.has(t.assignee));
   const body = h('div', {},
@@ -776,11 +821,14 @@ function homePage() {
         state.selecting ? 'Auswahl beenden' : '☑ Auswählen'),
       h('span', { style: 'flex:1' }),
       h('label', {}, 'Sortierung '),
-      h('select', { onchange: (e) => { state.sort = e.target.value; render(); } },
-        Object.entries(SORTS).map(([k, s]) => h('option', { value: k, selected: k === state.sort }, s.label))),
+      h('select', { onchange: (e) => {
+        state.sortByList[list.id] = e.target.value;
+        try { localStorage.setItem('haus-tasks-sorts', JSON.stringify(state.sortByList)); } catch { /* ohne Speicher eben ohne Merken */ }
+        render();
+      } }, Object.entries(SORTS).map(([k, s]) => h('option', { value: k, selected: k === currentSortKey() }, s.label))),
       doneToggle()),
     h('div', { class: 'filters' }, chipGroup('Wer', ASSIGNEES, state.assignees)),
-    taskList(filtered, mine.length ? 'Keine Tasks für diesen Filter.' : (main ? 'Noch keine Tasks. Tipp oben etwas ein!' : `„${list.name}“ ist noch leer. Tipp oben etwas ein!`), sortFn));
+    taskList(filtered, mine.length ? 'Keine Tasks für diesen Filter.' : (main ? 'Noch keine Tasks. Tipp oben etwas ein!' : `„${list.name}“ ist noch leer. Tipp oben etwas ein!`)));
   const open = !main || state.todoOpen;
   return h('div', {},
     main && inboxSection(),

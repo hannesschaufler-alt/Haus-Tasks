@@ -1045,3 +1045,21 @@ test('Gericht wieder öffnen: die zurückgesetzte Checkliste kommt bei Google un
   assert.strictEqual(onB.done, false);
   assert.deepStrictEqual(onB.checklist.map((i) => i.done), [false, false]);
 });
+
+test('Manuelle Position (order) wandert mit zu Google und zum zweiten Gerät, ohne Position bleibt leer', async () => {
+  const a = fakeStore();
+  const b = fakeStore();
+  const t1 = await createLocal(a, { title: 'Milch', in_calendar: false, order: 1500.5 });
+  await createLocal(a, { title: 'Brot', in_calendar: false });
+  await S.syncWith(a, remote);
+  assert.strictEqual(evByTitle('Milch').extendedProperties.private.order, '1500.5');
+  assert.strictEqual(evByTitle('Brot').extendedProperties.private.order, '');
+  await S.syncWith(b, remote);
+  const onB = (await b.getRawTasks());
+  assert.strictEqual(onB.find((t) => t.title === 'Milch').order, 1500.5);
+  assert.strictEqual(onB.find((t) => t.title === 'Brot').order, null);
+  await updateLocal(b, onB.find((t) => t.title === 'Milch').id, { order: 77 });
+  await S.syncWith(b, remote);
+  await S.syncWith(a, remote);
+  assert.strictEqual((await a.getRawTasks()).find((t) => t.id === t1.id).order, 77);
+});
