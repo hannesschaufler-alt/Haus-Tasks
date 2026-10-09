@@ -73,7 +73,17 @@
     return txDone(s);
   }
 
-  const store = { getRawTasks, saveRawTasks, getMeta, setMeta, getConfig, saveConfig, getOutbox, removeOutboxEntry };
+  // Alle Zugriffe, die lokale Tasks lesen UND wieder schreiben (Änderungen in der App und der Sync), laufen nacheinander:
+  // sonst überschreibt einer mit seiner veralteten Kopie das, was der andere gerade gespeichert hat (z. B. zügig
+  // abgehakte Einkaufspunkte, während ein Sync läuft).
+  let lockChain = Promise.resolve();
+  function withLock(fn) {
+    const run = lockChain.then(fn);
+    lockChain = run.then(() => {}, () => {});
+    return run;
+  }
+
+  const store = { getRawTasks, saveRawTasks, getMeta, setMeta, getConfig, saveConfig, getOutbox, removeOutboxEntry, withLock };
 
   // --- Kalender-Einrichtung: die ID des geteilten Kalenders (einmalig pro Gerät) ----------------------
   // Kommt entweder aus einem Einladungslink (?cal=…, siehe haushalt.html) oder wird von Hand eingegeben.
@@ -105,7 +115,8 @@
   // – hier wird jede so betroffene Zeile beim Laden einmalig lokal wieder auf „kein Datum“ zurückgesetzt.
   const POISONED_DATE = root.SyncCore.NO_DATE_PLACEHOLDER;
   const MIN_DATE = '2026-01-01';
-  async function getCachedTasks() {
+  async function getCachedTasks() { return withLock(getCachedTasksLocked); }
+  async function getCachedTasksLocked() {
     let raw = await getRawTasks();
     const stray = raw.filter((t) => t.title === CONFIG_TITLE);
     if (stray.length) {
@@ -150,7 +161,8 @@
   function pendingCount() { return getOutbox().then((l) => l.length); }
 
   // --- Änderungen anwenden: sofort lokal (über offline-logic.js), dazu ggf. ein Warteschlangen-Eintrag ---
-  async function mutate(kind, op, args) {
+  async function mutate(kind, op, args) { return withLock(() => mutateLocked(kind, op, args)); }
+  async function mutateLocked(kind, op, args) {
     const raw = await getRawTasks();
     const cfg = await configOrEmpty();
 
@@ -252,12 +264,14 @@
   // wartet, bekommt hier vor jedem Sync eine neue Chance – betrifft in der Praxis nur solche Altfälle,
   // ein normal gerade erst angelegter Task hat ohnehin schon einen passenden Eintrag.
   async function reconcileMissingEvents() {
-    const raw = await getRawTasks();
-    const pending = new Set((await getOutbox()).map((e) => e.taskId));
-    for (const t of raw) {
-      if (t.deleted || t.google_event_id || pending.has(t.id)) continue;
-      await enqueue({ kind: 'task', op: 'create', taskId: t.id, patch: t });
-    }
+    return withLock(async () => {
+      const raw = await getRawTasks();
+      const pending = new Set((await getOutbox()).map((e) => e.taskId));
+      for (const t of raw) {
+        if (t.deleted || t.google_event_id || pending.has(t.id)) continue;
+        await enqueue({ kind: 'task', op: 'create', taskId: t.id, patch: t });
+      }
+    });
   }
 
   async function sync() {

@@ -1063,3 +1063,30 @@ test('Manuelle Position (order) wandert mit zu Google und zum zweiten Gerät, oh
   await S.syncWith(a, remote);
   assert.strictEqual((await a.getRawTasks()).find((t) => t.id === t1.id).order, 77);
 });
+
+test('Zügig abhaken während ein Sync läuft: der zwischendurch angetippte Punkt springt nicht zurück auf „offen“', async () => {
+  const store = fakeStore();
+  const rawOutbox = store.getOutbox;
+  store.getOutbox = async () => [...(await rawOutbox())]; // wie IndexedDB: eine Momentaufnahme, kein lebendes Array
+  const a = await createLocal(store, { title: 'Milch', in_calendar: false });
+  const b = await createLocal(store, { title: 'Brot', in_calendar: false });
+  const c = await createLocal(store, { title: 'Eier', in_calendar: false });
+  await S.syncWith(store, remote);
+  await doneLocal(store, a.id, true);
+  // Während der (langsamen) Übertragung von „Milch“ tippt jemand „Brot“ und danach „Eier“ an.
+  const realPatch = remote.patch.bind(remote);
+  let first = true;
+  remote.patch = async (id, body) => {
+    const res = await realPatch(id, body);
+    if (first) { first = false; await doneLocal(store, b.id, true); await doneLocal(store, c.id, true); }
+    return res;
+  };
+  await S.syncWith(store, remote);
+  remote.patch = realPatch;
+  const local = await store.getRawTasks();
+  assert.deepStrictEqual(local.map((t) => t.title + ':' + t.done), ['Milch:true', 'Brot:true', 'Eier:true'], 'lokal bleibt, was angetippt wurde');
+  const r = await S.syncWith(store, remote);
+  assert.strictEqual(r.pushed, 2);
+  assert.ok(taskEvents().every((e) => e.summary.startsWith('✓ ')), 'und kommt danach auch bei Google an');
+  assert.strictEqual((await store.getOutbox()).length, 0);
+});

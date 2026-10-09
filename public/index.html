@@ -329,8 +329,11 @@ function h(tag, attrs, ...kids) {
 
 // Reicht ausstehende lokale Änderungen sofort nach, falls die Verbindung inzwischen wieder da ist,
 // ohne bei jeder einzelnen Aktion einen vollen Sync anzustoßen.
+// Läuft schon ein Sync, wird danach gleich noch einer nachgeschoben (syncAgain): sonst bliebe, was man währenddessen
+// angetippt hat, bis zum nächsten Zeitgeber liegen.
+let syncAgain = false;
 function kickSync() {
-  Offline.pendingCount().then((n) => { if (n > 0) syncNow(true); });
+  Offline.pendingCount().then((n) => { if (n > 0) { if (syncing) syncAgain = true; else syncNow(true); } });
 }
 
 // Nur tatsächlich geänderte Felder gehen in einen Patch (nicht das ganze Formular), damit eine
@@ -1444,6 +1447,7 @@ async function syncNow(silent) {
     state.status = await computeStatus();
   }
   syncing = false;
+  if (syncAgain) { syncAgain = false; setTimeout(() => syncNow(true), 200); }
   setTimeout(migrateLater, 0); // erst nach dem Sync-Durchlauf (siehe migrateLater)
   if (syncBtn()) syncBtn().disabled = false;
   render();

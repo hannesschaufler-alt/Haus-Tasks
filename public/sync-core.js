@@ -11,6 +11,9 @@
 //   saveConfig(cfg)          -> Promise<void>
 //   getOutbox()              -> Promise<OutboxEntry[]>   nach `seq` aufsteigend
 //   removeOutboxEntry(seq)   -> Promise<void>
+//   withLock(fn)             -> Promise<any>             (optional) führt fn exklusiv aus, auch gegenüber lokalen Änderungen
+//                                                         (Offline.mutate): so überschreibt ein laufender Sync nie einen
+//                                                         Task, den man währenddessen angetippt hat
 //
 // remote (austauschbar: echtes Google-Kalender-REST-API im Browser, Attrappe in Tests):
 //   listChanges(syncToken)    -> Promise<{events, nextSyncToken, incremental}>
@@ -274,8 +277,31 @@
   }
 
   // Lokale Zusatzfelder, nachdem ein Event mit diesem Stand geschrieben wurde.
+  function eventFields(t, opts) {
+    return { time_slot: usesTimeSlot(t, opts), slot_index: t.slot_index ?? null, cal_migrate: false, hidden_date: isVisible(t) ? null : hiddenDateFor(t) };
+  }
   function writtenFields(t, opts) {
-    return { time_slot: usesTimeSlot(t, opts), slot_index: t.slot_index ?? null, in_calendar: isVisible(t), cal_migrate: false, hidden_date: isVisible(t) ? null : hiddenDateFor(t) };
+    return { ...eventFields(t, opts), in_calendar: isVisible(t) };
+  }
+
+  // Alle Schreibzugriffe des Syncs auf lokale Tasks laufen exklusiv (siehe withLock) und lesen den Stand JEDES Mal
+  // frisch, statt am Anfang eine Kopie zu ziehen und sie nach den langsamen Netzwerkaufrufen zurückzuschreiben:
+  // Hakt man beim Einkaufen zügig Punkt für Punkt ab, lief währenddessen ein Sync und schrieb seine veraltete Kopie
+  // zurück – die zuletzt angetippten Punkte sprangen wieder auf „offen“.
+  const locked = (store, fn) => (store.withLock ? store.withLock(fn) : fn());
+  async function updateTasks(store, fn) {
+    await locked(store, async () => { await store.saveRawTasks(fn(await store.getRawTasks())); });
+  }
+  // Ändert genau EINEN Task. `make(task, pending)`: pending = es warten (noch) weitere lokale Änderungen an diesem Task
+  // in der Warteschlange (außer `entry`, dem gerade gesendeten) – dann darf nur Technisches (Event-ID, Stand) übernommen
+  // werden, nicht der gesendete Inhalt, denn lokal gilt schon der neuere. `skipIfPending`: dann gar nichts ändern.
+  async function patchTask(store, taskId, make, { entry = null, skipIfPending = false } = {}) {
+    await locked(store, async () => {
+      const pending = (await store.getOutbox()).some((e) => e.taskId === taskId && (!entry || e.seq !== entry.seq));
+      if (skipIfPending && pending) return;
+      const cur = await store.getRawTasks();
+      await store.saveRawTasks(cur.map((t) => (t.id === taskId ? make(t, pending) : t)));
+    });
   }
 
   function findByEvent(tasks, eventId) {
@@ -348,15 +374,20 @@
       await store.setMeta('sync_token', null); // Token abgelaufen: komplett neu abgleichen
       res = await remote.listChanges(null);
     }
-    let tasks = await store.getRawTasks();
     const full = !res.incremental;
     const seen = new Set();
     let pulled = 0;
 
+    // Lesen, Zusammenführen und Speichern exklusiv am Stück; welche Tasks noch ungesendete Änderungen haben, wird erst
+    // hier (nicht schon beim Start des Syncs) bestimmt – sonst gingen Änderungen verloren, die während des Abrufs bei
+    // Google gemacht wurden.
+    await locked(store, async () => {
+    const dirty = new Set([...dirtyIds, ...(await store.getOutbox()).map((e) => e.taskId)]);
+    let tasks = await store.getRawTasks();
     for (const ev of res.events) {
       if (ev.status !== 'cancelled') seen.add(ev.id);
       const row = findByEvent(tasks, ev.id);
-      if (row && dirtyIds.has(row.id) && ev.updated && row.updated_at > ev.updated) continue; // lokal jünger, wird gleich gepusht
+      if (row && dirty.has(row.id) && ev.updated && row.updated_at > ev.updated) continue; // lokal jünger, wird gleich gepusht
       const r = applyRemoteEvent(tasks, ev);
       if (r.changed) { tasks = r.tasks; pulled++; }
     }
@@ -365,7 +396,7 @@
       // Was lokal ein Google-Event hat, dort aber nicht mehr vorkommt, wurde in Google gelöscht.
       for (const row of tasks.filter((t) => t.google_event_id && !t.deleted)) {
         if (seen.has(row.google_event_id)) continue;
-        if (dirtyIds.has(row.id)) {
+        if (dirty.has(row.id)) {
           tasks = tasks.map((t) => (t.id === row.id ? { ...t, google_event_id: null, google_updated: null } : t)); // lokale Änderung gewinnt
         } else {
           tasks = tasks.filter((t) => t.id !== row.id);
@@ -374,6 +405,7 @@
       }
     }
     await store.saveRawTasks(tasks);
+    });
     if (res.nextSyncToken) await store.setMeta('sync_token', res.nextSyncToken);
     return pulled;
   }
@@ -413,7 +445,7 @@
           const clash = detectClash(entry, task, freshEvent);
           if (clash) clashes.push(clash);
           await remote.remove(task.google_event_id).catch((e) => { if (!isGone(e)) throw e; });
-          await store.saveRawTasks((await store.getRawTasks()).filter((t) => t.id !== entry.taskId));
+          await updateTasks(store, (cur) => cur.filter((t) => t.id !== entry.taskId));
           sent.push(entry);
           await store.removeOutboxEntry(entry.seq);
           continue;
@@ -424,8 +456,7 @@
         if (!task.google_event_id) {
           const slotted = withSlotIndex(tasks, { ...task, slot_index: null }, opts);
           const ev = await remote.insert(eventBody(slotted, opts));
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, ...writtenFields(slotted, opts) } : t));
-          await store.saveRawTasks(tasks);
+          await patchTask(store, task.id, (t, pending) => ({ ...t, google_event_id: ev.id, google_updated: ev.updated, ...(pending ? eventFields(slotted, opts) : writtenFields(slotted, opts)) }), { entry });
           sent.push(entry);
           await store.removeOutboxEntry(entry.seq);
           continue;
@@ -447,8 +478,7 @@
         if (!freshEvent) {
           const slotted = withSlotIndex(tasks, { ...task, slot_index: null }, opts);
           const ev = await remote.insert(eventBody(slotted, opts)); // neu anlegen, mit dem vollen lokalen Stand
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_event_id: ev.id, google_updated: ev.updated, ...writtenFields(slotted, opts) } : t));
-          await store.saveRawTasks(tasks);
+          await patchTask(store, task.id, (t, pending) => ({ ...t, google_event_id: ev.id, google_updated: ev.updated, ...(pending ? eventFields(slotted, opts) : writtenFields(slotted, opts)) }), { entry });
           sent.push(entry);
           await store.removeOutboxEntry(entry.seq);
           continue;
@@ -463,8 +493,10 @@
         if (merged.due_date !== freshShape.due_date || !!merged.in_calendar !== !!freshShape.in_calendar) merged = { ...merged, slot_index: null };
         merged = withSlotIndex(tasks, { ...merged, id: task.id }, opts); // id bleibt dran: der versteckte Tag wird daraus abgeleitet
         const ev = await remote.patch(task.google_event_id, eventBody(merged, opts));
-        tasks = tasks.map((t) => (t.id === task.id ? { ...t, ...merged, google_event_id: ev.id, google_updated: ev.updated, ...writtenFields(merged, opts) } : t));
-        await store.saveRawTasks(tasks);
+        // Gibt es inzwischen schon eine neuere lokale Änderung an diesem Task, bleibt lokal deren Stand stehen.
+        await patchTask(store, task.id, (t, pending) => (pending
+          ? { ...t, google_event_id: ev.id, google_updated: ev.updated, ...eventFields(merged, opts) }
+          : { ...t, ...merged, google_event_id: ev.id, google_updated: ev.updated, ...writtenFields(merged, opts) }), { entry });
         sent.push(entry);
         await store.removeOutboxEntry(entry.seq);
       } catch (e) {
@@ -523,19 +555,17 @@
         const fresh = await remote.get(task.google_event_id);
         let merged = taskShapeFromEvent(fresh);
         if (merged.due_time || !merged.due_date || !merged.in_calendar) continue; // inzwischen ein Termin mit echter Uhrzeit bzw. ohne Datum: nichts umzustellen
-        // `tasks` wird nach jedem Task fortgeschrieben, so sieht der nächste die schon vergebenen Plätze.
-        merged = { ...withSlotIndex(tasks, { ...merged, id: task.id }, opts) };
+        // Der Stand wird je Task frisch gelesen, so sieht der nächste die schon vergebenen Plätze.
+        merged = { ...withSlotIndex(await store.getRawTasks(), { ...merged, id: task.id }, opts) };
         const ev = await remote.patch(task.google_event_id, eventBody(merged, opts));
-        tasks = tasks.map((t) => (t.id === task.id ? { ...t, google_updated: ev.updated, ...writtenFields(merged, opts), slot_failed: undefined } : t));
-        await store.saveRawTasks(tasks);
+        await patchTask(store, task.id, (t) => ({ ...t, google_updated: ev.updated, ...writtenFields(merged, opts), slot_failed: undefined }), { skipIfPending: true });
         updated++;
       } catch (e) {
         const status = httpStatus(e);
         if (isGone(e)) continue; // Event weg: der nächste Abgleich räumt das lokal auf
         if (status >= 400 && status < 500) {
           // Dauerhaft abgelehnt: für diese Einstellung nicht ständig neu versuchen (siehe slot_failed-Prüfung oben).
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, slot_failed: !!opts.untimedAtEndOfDay } : t));
-          await store.saveRawTasks(tasks);
+          await patchTask(store, task.id, (t) => ({ ...t, slot_failed: !!opts.untimedAtEndOfDay }));
           continue;
         }
         break; // Netzwerkproblem o. Ä.: Rest beim nächsten Sync
@@ -553,12 +583,12 @@
     // Lokale Tasks aus einer Version ohne Schalter kennen `in_calendar` noch nicht: wie beim Einlesen der Events
     // ableiten (nur Tasks mit Uhrzeit bleiben sichtbar) und die Event-Umstellung vormerken.
     if (tasks.some((t) => t.in_calendar === undefined)) {
-      tasks = tasks.map((t) => {
+      await updateTasks(store, (cur) => cur.map((t) => {
         if (t.in_calendar !== undefined) return t;
         const in_calendar = !!(t.due_date && t.due_time);
         return { ...t, in_calendar, cal_migrate: !!t.google_event_id && !in_calendar };
-      });
-      await store.saveRawTasks(tasks);
+      }));
+      tasks = await store.getRawTasks();
     }
     const candidates = tasks.filter((t) => t.cal_migrate && t.google_event_id && !t.deleted && !dirtyIds.has(t.id) && !t.cal_failed);
     let updated = 0;
@@ -569,19 +599,17 @@
         if (shape.cal_migrate) {
           const merged = { ...shape, id: task.id };
           const ev = await remote.patch(task.google_event_id, eventBody(merged, opts));
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, ...merged, google_updated: ev.updated, ...writtenFields(merged, opts) } : t));
+          await patchTask(store, task.id, (t) => ({ ...t, ...merged, google_updated: ev.updated, ...writtenFields(merged, opts) }), { skipIfPending: true });
           updated++;
         } else {
           // Hat inzwischen ein anderes Gerät umgestellt: nur den Stand übernehmen.
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, in_calendar: shape.in_calendar, cal_migrate: false, hidden_date: shape.hidden_date } : t));
+          await patchTask(store, task.id, (t) => ({ ...t, in_calendar: shape.in_calendar, cal_migrate: false, hidden_date: shape.hidden_date }), { skipIfPending: true });
         }
-        await store.saveRawTasks(tasks);
       } catch (e) {
         const status = httpStatus(e);
         if (isGone(e)) continue;
         if (status >= 400 && status < 500 && status !== 429) {
-          tasks = tasks.map((t) => (t.id === task.id ? { ...t, cal_failed: true } : t)); // dauerhaft abgelehnt: nicht ständig neu versuchen
-          await store.saveRawTasks(tasks);
+          await patchTask(store, task.id, (t) => ({ ...t, cal_failed: true })); // dauerhaft abgelehnt: nicht ständig neu versuchen
           continue;
         }
         break; // Netzwerkproblem, Limit (429) o. Ä.: Rest beim nächsten Sync
