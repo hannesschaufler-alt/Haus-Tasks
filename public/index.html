@@ -1411,14 +1411,12 @@ async function syncNow(silent) {
       state.tasks = await Offline.getCachedTasks();
       state.lastSyncError = r.aborted ? 'Verbindung verloren' : null;
       if (!r.aborted) state.lastSyncAt = new Date();
-      // Diese beiden sind wichtig genug, um auch bei einem stillen Hintergrund-Sync angezeigt zu werden:
-      // eine dauerhaft abgelehnte Änderung (verworfen, sonst unbemerkt verloren) und ein erkannter
-      // Zusammenstoß mit einer zwischenzeitlichen Fremdänderung (nichts verloren, aber erwähnenswert).
+      // Wichtig genug, um auch bei einem stillen Hintergrund-Sync angezeigt zu werden: eine dauerhaft abgelehnte
+      // Änderung (verworfen, sonst unbemerkt verloren).
       if (r.failed.length) toast(`⚠ ${r.failed.length} lokale Änderung(en) konnten nicht übernommen werden: ${r.failed[0].error}`);
-      if (r.clashes.length) {
-        const names = [...new Set(r.clashes.map((c) => c.title))].join(', ');
-        toast(`ℹ Bei „${names}“ gab es während der Offline-Zeit auch eine Änderung auf einem anderen Gerät – geprüft, nichts ging verloren.`);
-      }
+      // Der Hinweis „Änderung auf einem anderen Gerät“ (r.clashes) wird nicht mehr als Meldung gezeigt: er kam bei jeder
+      // Änderung, auch wenn das andere Gerät gar nicht aktiv war. Die Zusammenführung selbst läuft unverändert;
+      // r.clashes steht weiter im Sync-Verlauf der Debug-Ansicht (#/debug).
       if (!silent) {
         if (r.aborted) toast('Verbindung während der Übertragung verloren, der Rest folgt automatisch.');
         else toast(`Sync fertig: ${r.pulled} übernommen, ${r.pushed} gesendet${r.calUpdated ? `, ${r.calUpdated} aus dem Google-Kalender ausgeblendet` : ''}.`);
