@@ -240,3 +240,26 @@ test('Listen: Listenwechsel färbt um; außerhalb der Hauptliste ist alles „to
   assert.strictEqual(task.color, '9');
   assert.strictEqual(task.bucket, 'todo');
 });
+
+test('Wieder auf „offen“ gestellt: die Checkliste springt zurück auf „nicht erledigt“; beim Abhaken bleibt sie wie sie ist', () => {
+  const checklist = [{ text: 'Teig', done: true }, { text: 'Käse', done: true }, { text: 'Tomaten', done: false }];
+  const { task: t0 } = L.createTask([], { title: 'Pizza', checklist }, CATS);
+  const { task: erledigt, tasks } = L.setDone([t0], t0.id, true);
+  assert.deepStrictEqual(erledigt.checklist.map((i) => i.done), [true, true, false], 'Abhaken lässt die Checkliste unberührt');
+  const { task: wieder } = L.setDone(tasks, t0.id, false);
+  assert.deepStrictEqual(wieder.checklist, [{ text: 'Teig', done: false }, { text: 'Käse', done: false }, { text: 'Tomaten', done: false }]);
+  assert.strictEqual(wieder.done, false);
+});
+
+test('Einkaufsliste: Zutaten ohne Doppelte und ohne das, was dort schon offen steht', () => {
+  const existing = [{ title: 'Käse', done: false }, { title: 'Mehl', done: true }, { title: 'Gelöscht', done: false, deleted: true }];
+  const r = L.shoppingItems([{ text: ' käse ' }, { text: 'Mehl' }, { text: 'Gelöscht' }, { text: 'Tomaten', done: true }, { text: 'tomaten' }, { text: '  ' }], existing);
+  assert.deepStrictEqual(r.add, ['Mehl', 'Gelöscht', 'Tomaten']); // erledigtes/gelöschtes zählt nicht als „steht schon drauf“
+  assert.strictEqual(r.already, 1);
+  assert.deepStrictEqual(L.shoppingItems([], []), { add: [], already: 0 });
+});
+
+test('Ausdrücklicher Anlegezeitpunkt wird übernommen, ein ungültiger ignoriert', () => {
+  assert.strictEqual(L.createTask([], { title: 'A', created_at: '2031-01-02T03:04:05.006Z' }, CATS).task.created_at, '2031-01-02T03:04:05.006Z');
+  assert.ok(L.createTask([], { title: 'B', created_at: 'quatsch' }, CATS).task.created_at.startsWith(new Date().getFullYear().toString()));
+});

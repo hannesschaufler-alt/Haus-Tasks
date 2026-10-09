@@ -59,7 +59,9 @@
       google_event_id: null,
       google_updated: null,
       deleted: false,
-      created_at: nowIso(),
+      // Ein ausdrücklicher Anlegezeitpunkt erlaubt eine feste Reihenfolge, wenn mehrere Tasks auf einmal entstehen
+      // (z. B. Zutaten für die Einkaufsliste: „neueste zuerst“ sortiert sonst gleiche Millisekunden nach Titel).
+      created_at: input.created_at && !Number.isNaN(Date.parse(input.created_at)) ? new Date(input.created_at).toISOString() : nowIso(),
       updated_at: nowIso(),
     };
     return { task, tasks: [...tasks, task] };
@@ -122,7 +124,10 @@
     // versteckt bleiben (siehe NO_DATE_PLACEHOLDER in sync-core.js) statt als erledigter Termin sichtbar
     // zu sein. Beim Rückgängig-Machen bleibt das Datum bewusst stehen (kein automatisches Zurücksetzen).
     const due_date = done && !cur.due_date ? today() : cur.due_date;
-    let updated = { ...cur, done: !!done, done_at: done ? ts : null, due_date, updated_at: ts };
+    // Ein Task, der wieder auf „offen“ gestellt wird (z. B. ein Gericht, das man noch einmal kochen will), bekommt eine
+    // frische Checkliste: alle Punkte springen zurück auf „nicht erledigt“. Gilt für alle Tasks.
+    const checklist = !done && Array.isArray(cur.checklist) ? cur.checklist.map((i) => ({ ...i, done: false })) : cur.checklist;
+    let updated = { ...cur, done: !!done, done_at: done ? ts : null, due_date, checklist, updated_at: ts };
     let list = tasks.map((t) => (t.id === id ? updated : t));
     let created = null;
     if (done && cur.recurrence && cur.due_date && !cur.next_task_id) {
@@ -157,6 +162,24 @@
     if (!cur) throw new Error('Task nicht gefunden');
     if (!cur.google_event_id) return { tasks: tasks.filter((t) => t.id !== id) };
     return { tasks: tasks.map((t) => (t.id === id ? { ...t, deleted: true, updated_at: nowIso() } : t)) };
+  }
+
+  // Zutaten einer Checkliste für die Einkaufsliste: Texte ohne Doppelte, ohne das, was dort schon offen steht
+  // (Groß-/Kleinschreibung egal). `existing`: die Tasks der Einkaufsliste.
+  function shoppingItems(checklist, existing) {
+    const norm = (t) => String(t ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const have = new Set(existing.filter((t) => !t.done && !t.deleted).map((t) => norm(t.title)));
+    const seen = new Set();
+    const add = [];
+    let unique = 0;
+    for (const item of checklist || []) {
+      const key = norm(item.text);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      unique++;
+      if (!have.has(key)) add.push(String(item.text).trim());
+    }
+    return { add, already: unique - add.length };
   }
 
   const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
@@ -216,6 +239,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST,
+    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, shoppingItems,
   };
 });

@@ -184,7 +184,10 @@
         // setDone() befüllt due_date beim Abhaken eines datumslosen Tasks mit dem heutigen Datum (siehe
         // offline-logic.js) – muss mit in den Patch, sonst überschreibt der Merge-vor-Patch-Mechanismus in
         // push() es beim Senden wieder mit dem alten (leeren) Stand.
-        await enqueue({ kind, op, taskId: args.id, patch: { done: args.done, due_date: task.due_date }, baseUpdatedAt: before?.updated_at });
+        // Beim Wiedereröffnen setzt setDone() außerdem die Checkliste zurück – auch das muss mit in den Patch.
+        const donePatch = { done: args.done, due_date: task.due_date };
+        if (JSON.stringify(before?.checklist ?? []) !== JSON.stringify(task.checklist ?? [])) donePatch.checklist = task.checklist;
+        await enqueue({ kind, op, taskId: args.id, patch: donePatch, baseUpdatedAt: before?.updated_at });
         // Ein Folgetermin einer Serie entsteht rein lokal und braucht einen eigenen Anlege-Auftrag –
         // sync-core.js kennt Serien nicht, es sendet nur, was in der Warteschlange steht.
         if (created) await enqueue({ kind: 'task', op: 'create', taskId: created.id, patch: created });

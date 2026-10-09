@@ -112,7 +112,9 @@ async function doneLocal(store, id, done) {
   const { task, tasks, created } = OfflineLogic.setDone(raw, id, done);
   await store.saveRawTasks(tasks);
   // Wie Offline.mutate(): setDone() befüllt due_date beim Abhaken eines datumslosen Tasks, das muss mit.
-  await store.enqueue('done', id, { done, due_date: task.due_date }, before.updated_at);
+  const patch = { done, due_date: task.due_date };
+  if (JSON.stringify(before.checklist ?? []) !== JSON.stringify(task.checklist ?? [])) patch.checklist = task.checklist; // wie Offline.mutate()
+  await store.enqueue('done', id, patch, before.updated_at);
   // Ein Folgetermin einer Serie entsteht lokal und braucht einen eigenen „Anlegen“-Auftrag –
   // push() weiß nichts von Serien, es sendet nur, was in der Warteschlange steht.
   if (created) await store.enqueue('create', created.id, created);
@@ -1025,4 +1027,21 @@ test('Ein Termin, den eine ältere App-Version auf den versteckten Tag zurückge
   const store = fakeStore();
   await S.syncWith(store, remote);
   for (const t of await store.getRawTasks()) assert.strictEqual(t.due_date, null, t.title);
+});
+
+test('Gericht wieder öffnen: die zurückgesetzte Checkliste kommt bei Google und auf dem zweiten Gerät an', async () => {
+  const a = fakeStore();
+  const b = fakeStore();
+  const t = await createLocal(a, { title: 'Pizza', checklist: [{ text: 'Teig', done: true }, { text: 'Käse', done: true }] });
+  await doneLocal(a, t.id, true);
+  await S.syncWith(a, remote);
+  await S.syncWith(b, remote);
+  assert.deepStrictEqual((await b.getRawTasks())[0].checklist.map((i) => i.done), [true, true]);
+  await doneLocal(a, t.id, false);
+  await S.syncWith(a, remote);
+  assert.deepStrictEqual(JSON.parse(taskEvents()[0].extendedProperties.private.checklist).map((i) => i.done), [false, false]);
+  await S.syncWith(b, remote);
+  const onB = (await b.getRawTasks())[0];
+  assert.strictEqual(onB.done, false);
+  assert.deepStrictEqual(onB.checklist.map((i) => i.done), [false, false]);
 });

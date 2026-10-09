@@ -227,6 +227,9 @@
   .chk-list input[type=checkbox]:checked, .chk-row input[type=checkbox]:checked { border-color: var(--accent); background: var(--accent); }
   .chk-list input[type=checkbox]:checked::before, .chk-row input[type=checkbox]:checked::before { transform: scale(1); }
   .chk-add { justify-self: start; margin-top: 6px; }
+  .chk-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
+  .chk-actions .chk-add { margin-top: 0; }
+  .chk-list li.chk-send { margin-top: 6px; }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; z-index: 10; }
   dialog { max-height: calc(100dvh - 24px); overflow-y: auto; }
   .wrap { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); padding-bottom: max(16px, env(safe-area-inset-bottom)); }
@@ -434,7 +437,36 @@ function checklistBadge(t) {
 function checklistView(t) {
   return h('ul', { class: 'chk-list', onclick: (e) => e.stopPropagation() },
     t.checklist.map((item, i) => h('li', { class: item.done ? 'done' : '' },
-      h('label', {}, h('input', { type: 'checkbox', checked: item.done, onchange: (e) => toggleItem(t, i, e.target.checked) }), h('span', {}, item.text)))));
+      h('label', {}, h('input', { type: 'checkbox', checked: item.done, onchange: (e) => toggleItem(t, i, e.target.checked) }), h('span', {}, item.text)))),
+    canSendToShopping(t) && h('li', { class: 'chk-send' }, sendToShoppingButton(() => t.checklist)));
+}
+
+// --- Einkaufsliste ---
+// Die Zutaten einer Checkliste (z. B. eines Gerichts) lassen sich mit einem Klick als einzelne Tasks auf die Einkaufsliste
+// setzen. Einkaufsliste = die Liste mit der Markierung „Das ist meine Einkaufsliste“ (✎ am Reiter), sonst die erste
+// Liste mit „Einkauf“ im Namen.
+const shoppingList = () => state.lists.find((l) => l.shopping) || state.lists.find((l) => /einkauf/i.test(l.name)) || null;
+const canSendToShopping = (t) => { const shop = shoppingList(); return !!shop && listOf(t) !== shop.id; };
+function sendToShoppingButton(getItems) {
+  return h('button', { type: 'button', class: 'btn small', title: 'Alle Punkte als Tasks auf die Einkaufsliste setzen', onclick: (e) => { e.stopPropagation(); sendToShopping(getItems()); } },
+    '🛒 An Einkaufsliste senden');
+}
+async function sendToShopping(items) {
+  const shop = shoppingList();
+  if (!shop) { toast('Keine Einkaufsliste gefunden: Lege eine Liste „Einkaufsliste“ an oder markiere eine Liste über ✎ als Einkaufsliste.'); return; }
+  const { add, already } = OfflineLogic.shoppingItems(items, state.tasks.filter((t) => listOf(t) === shop.id));
+  if (!add.length) { toast(already ? 'Alles steht schon auf der Einkaufsliste.' : 'Die Checkliste ist leer.'); return; }
+  try {
+    // Neue Tasks stehen oben: der erste Punkt der Checkliste bekommt den jüngsten Zeitstempel und steht damit ganz oben
+    // (rückwärts angelegt, damit das auch auf den anderen Geräten so ankommt).
+    const base = Date.now();
+    for (let i = add.length - 1; i >= 0; i--) {
+      await Offline.mutate('task', 'create', { input: { title: add[i], list_id: shop.id, bucket: 'todo', created_at: new Date(base - i).toISOString() } });
+    }
+    await reload();
+    kickSync();
+    toast(`${add.length} Punkt${add.length === 1 ? '' : 'e'} auf „${shop.name}“ gesetzt${already ? `, ${already} standen schon drauf` : ''}.`);
+  } catch (e) { toast(e.message); reload(); }
 }
 
 // Checkliste wird als volles Array gesendet (nicht nur der eine geänderte Punkt) – wird schnell
@@ -788,69 +820,108 @@ function paintTabs() {
   nav.querySelectorAll('.tab.list').forEach(enableTabDrag);
 }
 
-// Reihenfolge der Listen per Drag&Drop: Maus – einfach ziehen; Touch – kurz gedrückt halten, dann ziehen (sonst scrollt
-// die Reiterleiste). Wie bei der Checkliste über Pointer-Events (die native HTML5-Drag-API ist auf dem Handy unzuverlässig);
-// die Reihenfolge entsteht aus der DOM-Reihenfolge der Reiter und wird in den gemeinsamen Einstellungen gespeichert.
-const LONG_PRESS_MS = 350;
-let justDragged = false;
-function enableTabDrag(tab) {
-  let timer = null, active = false, startX = 0, pointerId = null, touch = false;
-  const nav = tab.parentElement;
-  const cancel = () => { clearTimeout(timer); timer = null; };
-  const activate = () => {
-    active = true;
-    tab.classList.add('dragging');
-    try { tab.setPointerCapture(pointerId); } catch { /* Zeiger schon weg */ }
+// Gemeinsame Drag&Drop-Sortierung per Pointer-Events (Checkliste: senkrecht, Listen-Reiter: waagrecht). Die native
+// HTML5-Drag-API ist auf dem Handy unzuverlässig. Wichtig: Bewegung und Loslassen werden am `document` abgehört, NICHT
+// über setPointerCapture am gezogenen Element – das Element wird beim Umsortieren im DOM verschoben, und der Browser
+// gibt dabei die Zeiger-Erfassung frei. Das Loslassen kam dann nie an, das Feld blieb verschoben stehen.
+// Das gezogene Element folgt dem Zeiger über transform und bleibt dabei immer innerhalb seines Containers (Raster).
+//   item/handle: gezogenes Element / Griff; container + itemSel: Geschwister, unter denen sortiert wird;
+//   axis: 'y' | 'x'; mode: 'now' (sofort ziehen) oder 'drag' (Maus: nach kurzer Bewegung, Touch: nach langem Drücken).
+function attachSort({ item, handle = item, container, itemSel, axis = 'y', mode = 'now', onDone }) {
+  const horiz = axis === 'x';
+  const pos = (e) => (horiz ? e.clientX : e.clientY);
+  const startOf = (r) => (horiz ? r.left : r.top);
+  const endOf = (r) => (horiz ? r.right : r.bottom);
+  const sizeOf = (r) => (horiz ? r.width : r.height);
+  let timer = null, active = false, pid = null, startPos = 0, lastPos = 0, grab = 0, touch = false;
+
+  const place = () => {
+    // 1. Einsortieren: vor das erste andere Element, dessen Mitte hinter dem Zeiger liegt, sonst ans Ende.
+    const others = [...container.querySelectorAll(itemSel)].filter((o) => o !== item);
+    item.style.transform = '';
+    const before = others.find((o) => { const r = o.getBoundingClientRect(); return lastPos < startOf(r) + sizeOf(r) / 2; }) || null;
+    if (before) { if (item.nextElementSibling !== before) container.insertBefore(item, before); }
+    else if (others.length && others[others.length - 1].nextElementSibling !== item) others[others.length - 1].after(item);
+    // 2. Das Element folgt dem Zeiger, aber nie über den Rand des Containers hinaus.
+    const nat = item.getBoundingClientRect();
+    const box = container.getBoundingClientRect();
+    const clamped = Math.min(Math.max(lastPos - grab, startOf(box)), endOf(box) - sizeOf(nat));
+    const d = clamped - startOf(nat);
+    item.style.transform = horiz ? `translateX(${d}px)` : `translateY(${d}px)`;
   };
-  tab.addEventListener('pointerdown', (e) => {
-    if (e.button > 0) return;
-    touch = e.pointerType !== 'mouse';
-    pointerId = e.pointerId;
-    startX = e.clientX;
-    if (touch) timer = setTimeout(activate, LONG_PRESS_MS);
-  });
-  tab.addEventListener('pointermove', (e) => {
+
+  const activate = () => {
+    if (active) return;
+    active = true;
+    grab = lastPos - startOf(item.getBoundingClientRect());
+    item.classList.add('dragging');
+    place();
+  };
+  const stop = () => {
+    clearTimeout(timer); timer = null;
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    document.removeEventListener('pointercancel', onUp);
+    document.removeEventListener('touchmove', onTouchMove);
+  };
+  const onTouchMove = (e) => { if (active && e.cancelable) e.preventDefault(); }; // Seite/Leiste nicht mitscrollen
+  function onMove(e) {
+    if (e.pointerId !== pid) return;
+    lastPos = pos(e);
     if (!active) {
-      const moved = Math.abs(e.clientX - startX);
-      if (touch && moved > 8) cancel(); // der Finger scrollt schon – kein Ziehen
-      else if (!touch && pointerId === e.pointerId && e.buttons === 1 && moved > 6) activate();
+      const moved = Math.abs(lastPos - startPos);
+      if (mode === 'drag') {
+        if (touch) { if (moved > 8) stop(); } // der Finger scrollt schon: kein Ziehen
+        else if (moved > 6) activate();
+      }
       return;
     }
-    tab.style.transform = `translateX(${e.clientX - startX}px)`;
-    const prev = tab.previousElementSibling?.classList.contains('list') ? tab.previousElementSibling : null;
-    const next = tab.nextElementSibling?.classList.contains('list') ? tab.nextElementSibling : null;
-    if (prev) {
-      const r = prev.getBoundingClientRect();
-      if (e.clientX < r.left + r.width / 2) { nav.insertBefore(tab, prev); startX = e.clientX; tab.style.transform = ''; return; }
-    }
-    if (next) {
-      const r = next.getBoundingClientRect();
-      if (e.clientX > r.left + r.width / 2) { nav.insertBefore(next, tab); startX = e.clientX; tab.style.transform = ''; }
-    }
-  });
-  // Solange gezogen wird, darf die Seite nicht mitscrollen (nur nach dem langen Drücken wirksam).
-  tab.addEventListener('touchmove', (e) => { if (active) e.preventDefault(); }, { passive: false });
-  tab.addEventListener('contextmenu', (e) => { if (touch) e.preventDefault(); });
-  const end = async () => {
-    cancel();
-    if (!active) return;
+    if (e.cancelable) e.preventDefault();
+    place();
+  }
+  function onUp(e) {
+    if (e.pointerId !== pid) return;
+    const wasActive = active;
     active = false;
-    justDragged = true; // der Klick direkt nach dem Loslassen soll nicht die Liste wechseln
-    setTimeout(() => { justDragged = false; }, 0);
-    tab.classList.remove('dragging');
-    tab.style.transform = '';
-    const order = [...nav.querySelectorAll('.tab.list')].map((el) => el.dataset.id);
-    if (order.join() === state.lists.map((l) => l.id).join()) return;
-    try {
-      await Offline.setSettings({ lists: order.map((id) => state.lists.find((l) => l.id === id)).filter(Boolean) });
-      await refreshLists();
-      render();
-      syncNow(true); // Einstellungen stehen nicht in der Warteschlange
-    } catch (e) { toast(e.message); render(); }
-  };
-  tab.addEventListener('pointerup', end);
-  tab.addEventListener('pointercancel', end);
-  tab.addEventListener('click', (e) => { if (justDragged) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+    stop();
+    item.classList.remove('dragging');
+    item.style.transform = '';
+    if (wasActive) { item.dataset.justDragged = '1'; setTimeout(() => delete item.dataset.justDragged, 0); onDone?.(); }
+  }
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button > 0 || active) return;
+    if (mode === 'now') e.preventDefault(); // kein Textmarkieren/Scrollen am Griff
+    touch = e.pointerType !== 'mouse';
+    pid = e.pointerId;
+    startPos = lastPos = pos(e);
+    document.addEventListener('pointermove', onMove, { passive: false });
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    if (mode === 'now') activate();
+    else if (touch) timer = setTimeout(activate, 350);
+  });
+  handle.addEventListener('contextmenu', (e) => { if (touch && mode === 'drag') e.preventDefault(); });
+  // Der Klick direkt nach dem Loslassen soll nicht (z. B.) die Liste wechseln.
+  item.addEventListener('click', (e) => { if (item.dataset.justDragged) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+}
+
+// Reihenfolge der Listen per Drag&Drop: Maus – ziehen; Touch – kurz gedrückt halten, dann ziehen (sonst scrollt die Reiterleiste).
+// Die Reihenfolge entsteht aus der DOM-Reihenfolge der Reiter und wird in den gemeinsamen Einstellungen gespeichert.
+function enableTabDrag(tab) {
+  attachSort({
+    item: tab, container: tab.parentElement, itemSel: '.tab.list', axis: 'x', mode: 'drag',
+    onDone: async () => {
+      const order = [...tab.parentElement.querySelectorAll('.tab.list')].map((el) => el.dataset.id);
+      if (order.join() === state.lists.map((l) => l.id).join()) return;
+      try {
+        await Offline.setSettings({ lists: order.map((id) => state.lists.find((l) => l.id === id)).filter(Boolean) });
+        await refreshLists();
+        render();
+        syncNow(true); // Einstellungen stehen nicht in der Warteschlange
+      } catch (e) { toast(e.message); render(); }
+    },
+  });
 }
 
 // Anlegen / Umbenennen / Umfärben / Löschen einer Liste. Die Farbe bekommen neue Tasks der Liste (und damit ihre
@@ -862,6 +933,12 @@ function openListForm(list) {
   const used = new Set(state.lists.map((l) => l.color));
   const freeColor = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
   const picker = makeSwatches(list?.color || freeColor);
+  const shopBox = h('input', { type: 'checkbox', id: 'optShop', checked: !!list?.shopping });
+  const withShopping = (lists, id) => lists.map((l) => {
+    const { shopping, ...rest } = l;
+    if (l.id === id) return shopBox.checked ? { ...rest, shopping: true } : rest;
+    return shopBox.checked ? rest : l; // nur eine Liste ist die Einkaufsliste
+  });
   const err = h('div', { class: 'error' });
   const form = $('#form');
 
@@ -881,11 +958,11 @@ function openListForm(list) {
     try {
       if (isNew) {
         const created = { id: Math.random().toString(36).slice(2, 8), name, color: picker.get() };
-        await save([...state.lists, created]);
+        await save(withShopping([...state.lists, created], created.id));
         setList(created.id);
       } else {
         const colorChanged = picker.get() !== list.color;
-        await save(state.lists.map((l) => (l.id === list.id ? { ...l, name, color: picker.get() } : l)));
+        await save(withShopping(state.lists.map((l) => (l.id === list.id ? { ...l, name, color: picker.get() } : l)), list.id));
         if (colorChanged) {
           for (const t of state.tasks.filter((x) => listOf(x) === list.id && !x.done)) await Offline.mutate('task', 'update', { id: t.id, patch: { color: picker.get() } });
           await reload();
@@ -910,6 +987,8 @@ function openListForm(list) {
     h('h3', {}, isNew ? 'Neue Liste' : 'Liste bearbeiten'),
     h('div', { class: 'field' }, h('label', {}, 'Name'), nameInput),
     h('div', { class: 'field' }, h('label', {}, 'Farbe (so erscheinen die Tasks im Google-Kalender)'), picker.el),
+    h('label', { for: 'optShop', class: 'inline-check', style: 'color:var(--text)' }, shopBox, h('span', {}, '🛒 Das ist meine Einkaufsliste')),
+    h('div', { class: 'hint' }, 'Aus der Checkliste eines Tasks (z. B. den Zutaten eines Gerichts) lassen sich alle Punkte mit einem Klick auf diese Liste setzen. Ohne Markierung gilt die erste Liste mit „Einkauf“ im Namen.'),
     !isNew && h('div', { class: 'hint' }, 'Beim Umfärben ziehen die offenen Tasks der Liste mit.' + (main ? ' Die Hauptliste „' + list.name + '“ kann nicht gelöscht werden; nur dort gibt es Inbox und „Später“.' : '')),
     err,
     h('div', { class: 'actions' },
@@ -1022,7 +1101,7 @@ function makeAssigneePicker(initial) {
 
 // Editor für die Checkliste im Formular. Enter legt einen neuen Punkt an, Rücktaste in einem leeren Punkt entfernt ihn,
 // eingefügter mehrzeiliger Text (auch mit „-“, „*“ oder „[ ]“ davor) wird auf mehrere Punkte verteilt.
-function makeChecklistEditor(initial) {
+function makeChecklistEditor(initial, { onSend } = {}) {
   const rows = h('div', { class: 'chk-rows' });
 
   // Reihenfolge wird rein über die DOM-Reihenfolge der Zeilen gesteuert (siehe get()). Das Umsortieren
@@ -1035,40 +1114,7 @@ function makeChecklistEditor(initial) {
     const row = h('div', { class: 'chk-row' }, handle, cb, input,
       h('button', { type: 'button', class: 'icon-btn', title: 'Punkt entfernen', onclick: () => row.remove() }, '✕'));
 
-    let dragging = false;
-    let startY = 0;
-    const onMove = (e) => {
-      if (!dragging) return;
-      const deltaY = e.clientY - startY;
-      row.style.transform = `translateY(${deltaY}px)`;
-      const prev = row.previousElementSibling;
-      const next = row.nextElementSibling;
-      if (prev) {
-        const r = prev.getBoundingClientRect();
-        if (e.clientY < r.top + r.height / 2) { rows.insertBefore(row, prev); startY = e.clientY; row.style.transform = ''; return; }
-      }
-      if (next) {
-        const r = next.getBoundingClientRect();
-        if (e.clientY > r.top + r.height / 2) { rows.insertBefore(next, row); startY = e.clientY; row.style.transform = ''; }
-      }
-    };
-    const onEnd = (e) => {
-      if (!dragging) return;
-      dragging = false;
-      row.classList.remove('dragging');
-      row.style.transform = '';
-      try { handle.releasePointerCapture(e.pointerId); } catch { /* schon losgelassen */ }
-    };
-    handle.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      dragging = true;
-      startY = e.clientY;
-      row.classList.add('dragging');
-      handle.setPointerCapture(e.pointerId);
-    });
-    handle.addEventListener('pointermove', onMove);
-    handle.addEventListener('pointerup', onEnd);
-    handle.addEventListener('pointercancel', onEnd);
+    attachSort({ item: row, handle, container: rows, itemSel: '.chk-row', axis: 'y', mode: 'now' });
 
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -1097,11 +1143,13 @@ function makeChecklistEditor(initial) {
   };
 
   initial.forEach((i) => addRow(i.text, i.done));
-  const el = h('div', {}, rows,
-    h('button', { type: 'button', class: 'btn small chk-add', onclick: () => addRow('', false, { focus: true }) }, '＋ Punkt hinzufügen'));
   const get = () => [...rows.children]
     .map((r) => ({ text: r.querySelector('input[type=text]').value.trim(), done: r.querySelector('input[type=checkbox]').checked }))
     .filter((i) => i.text);
+  const el = h('div', {}, rows,
+    h('div', { class: 'chk-actions' },
+      h('button', { type: 'button', class: 'btn small chk-add', onclick: () => addRow('', false, { focus: true }) }, '＋ Punkt hinzufügen'),
+      onSend && sendToShoppingButton(() => get())));
   return { el, get };
 }
 
@@ -1139,7 +1187,7 @@ function openForm(task) {
   const who = makeAssigneePicker(t.assignee);
   const notes = h('textarea', { rows: 3 }, t.notes || '');
   notes.value = t.notes || '';
-  const chk = makeChecklistEditor(t.checklist || []);
+  const chk = makeChecklistEditor(t.checklist || [], { onSend: task && canSendToShopping(t) ? true : null });
 
 
   // Serie
