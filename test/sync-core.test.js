@@ -1090,3 +1090,44 @@ test('Zügig abhaken während ein Sync läuft: der zwischendurch angetippte Punk
   assert.ok(taskEvents().every((e) => e.summary.startsWith('✓ ')), 'und kommt danach auch bei Google an');
   assert.strictEqual((await store.getOutbox()).length, 0);
 });
+
+test('Googles Mengenbremse (403 Calendar usage limits exceeded / 429) verwirft keine Änderung: sie bleibt in der Warteschlange und geht später durch', async () => {
+  for (const make of [() => Object.assign(new Error('Calendar usage limits exceeded.'), { status: 403, reason: 'quotaExceeded' }), () => Object.assign(new Error('Too Many Requests'), { status: 429 })]) {
+    remote = fakeRemote();
+    const store = fakeStore();
+    const rawOutbox = store.getOutbox;
+    store.getOutbox = async () => [...(await rawOutbox())];
+    const a = await createLocal(store, { title: 'Milch', in_calendar: false });
+    const b = await createLocal(store, { title: 'Brot', in_calendar: false });
+    await S.syncWith(store, remote);
+    await doneLocal(store, a.id, true);
+    await doneLocal(store, b.id, true);
+    const realPatch = remote.patch.bind(remote);
+    let calls = 0;
+    remote.patch = async (id, body) => { if (++calls === 2) throw make(); return realPatch(id, body); }; // der zweite Auftrag wird gebremst
+    const r1 = await S.syncWith(store, remote);
+    assert.strictEqual(r1.aborted, true);
+    assert.strictEqual(r1.abortReason.retryable, true);
+    assert.deepStrictEqual(r1.failed, [], 'nicht als „dauerhaft abgelehnt“ gemeldet');
+    assert.strictEqual((await store.getOutbox()).length, 1, 'der gebremste Auftrag wartet noch');
+    const r2 = await S.syncWith(store, remote); // die Bremse ist weg
+    assert.strictEqual(r2.aborted, false);
+    assert.strictEqual((await store.getOutbox()).length, 0);
+    assert.ok(taskEvents().every((e) => e.summary.startsWith('✓ ')), 'beide Punkte sind bei Google abgehakt');
+  }
+});
+
+test('Dauerhaft abgelehnte Änderung (z. B. 400): verworfen und gemeldet, der nächste Sync holt zur Angleichung den Stand von Google zurück', async () => {
+  const store = fakeStore();
+  const t = await createLocal(store, { title: 'Milch', in_calendar: false });
+  await S.syncWith(store, remote);
+  await doneLocal(store, t.id, true);
+  const realPatch = remote.patch.bind(remote);
+  remote.patch = async () => { throw Object.assign(new Error('Bad Request'), { status: 400 }); };
+  const r1 = await S.syncWith(store, remote);
+  assert.strictEqual(r1.failed.length, 1);
+  assert.strictEqual((await store.getRawTasks())[0].done, true, 'lokal steht es noch auf „erledigt“');
+  remote.patch = realPatch;
+  await S.syncWith(store, remote);
+  assert.strictEqual((await store.getRawTasks())[0].done, false, 'danach gilt wieder der Stand von Google – nicht dauerhaft Unterschiedliches');
+});

@@ -11,6 +11,7 @@
   function apiError(status, data) {
     const e = new Error(data?.error?.message || `Google-Kalender-Fehler ${status}`);
     e.status = status;
+    e.reason = data?.error?.errors?.[0]?.reason; // z. B. „quotaExceeded“ (Calendar usage limits exceeded) oder „rateLimitExceeded“
     return e;
   }
 

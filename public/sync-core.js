@@ -55,6 +55,14 @@
   const nowIso = () => new Date().toISOString();
   const httpStatus = (e) => e.status ?? e.response?.status ?? (Number.isInteger(Number(e.code)) ? Number(e.code) : undefined);
   const isGone = (e) => [404, 410].includes(httpStatus(e));
+  // Google bremst bei zu vielen Änderungen in kurzer Zeit (429, oder 403 „Calendar usage limits exceeded“ / „rate limit“):
+  // das ist KEIN dauerhafter Fehler der Änderung – sie muss später noch einmal gesendet werden, nicht verworfen.
+  const isRetryable = (e) => {
+    const s = httpStatus(e);
+    if (s === 429) return true;
+    return s === 403 && /rate|quota|usage limit/i.test(`${e.reason || ''} ${e.message || ''}`);
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // Gemeinsame Einstellungen (liegen zusammen mit Kategorien/Orten im versteckten Konfigurations-Event, gelten
   // also für alle Geräte). Fehlt ein Wert, gilt die Vorgabe hier.
@@ -429,7 +437,11 @@
     const failed = [];
     const clashes = [];
 
+    let first = true;
     for (const entry of entries) {
+      // Kleine Pause zwischen den Aufträgen (opts.paceMs): viele Änderungen auf einmal lösen sonst Googles Mengenbremse aus.
+      if (!first && opts.paceMs) await sleep(opts.paceMs);
+      first = false;
       let tasks = await store.getRawTasks();
       const task = tasks.find((t) => t.id === entry.taskId);
       if (!task) {
@@ -500,10 +512,19 @@
         sent.push(entry);
         await store.removeOutboxEntry(entry.seq);
       } catch (e) {
+        if (isRetryable(e)) {
+          // Mengenbremse: nichts verwerfen, der Rest bleibt in der Warteschlange und wird später erneut versucht.
+          return { sent, failed, clashes, aborted: true, abortReason: { entry, message: e.message, status: httpStatus(e), retryable: true } };
+        }
         if (httpStatus(e) >= 400 && httpStatus(e) < 500) {
-          // Dauerhaft ungültig – verwerfen statt die Warteschlange zu blockieren.
+          // Dauerhaft ungültig – verwerfen statt die Warteschlange zu blockieren. Lokal und bei Google weichen jetzt
+          // aber ab: ein vollständiger Abgleich beim nächsten Mal holt den Stand von Google zurück, statt dass die
+          // Geräte stillschweigend dauerhaft Unterschiedliches zeigen.
           failed.push({ entry, error: e.message });
           await store.removeOutboxEntry(entry.seq);
+          await store.setMeta('sync_token', null);
+          // Ohne das würde der Abgleich den unveränderten Google-Termin als „eigenes Echo“ überspringen.
+          await patchTask(store, entry.taskId, (t) => ({ ...t, google_updated: null }), { skipIfPending: true });
           continue;
         }
         // Netzwerkfehler (oder ein unerwarteter Fehler ohne HTTP-Status): Rest bleibt gespeichert, versucht
@@ -563,6 +584,7 @@
       } catch (e) {
         const status = httpStatus(e);
         if (isGone(e)) continue; // Event weg: der nächste Abgleich räumt das lokal auf
+        if (isRetryable(e)) break; // Mengenbremse: später weiter
         if (status >= 400 && status < 500) {
           // Dauerhaft abgelehnt: für diese Einstellung nicht ständig neu versuchen (siehe slot_failed-Prüfung oben).
           await patchTask(store, task.id, (t) => ({ ...t, slot_failed: !!opts.untimedAtEndOfDay }));
@@ -608,7 +630,8 @@
       } catch (e) {
         const status = httpStatus(e);
         if (isGone(e)) continue;
-        if (status >= 400 && status < 500 && status !== 429) {
+        if (isRetryable(e)) break; // Mengenbremse: später weiter
+        if (status >= 400 && status < 500) {
           await patchTask(store, task.id, (t) => ({ ...t, cal_failed: true })); // dauerhaft abgelehnt: nicht ständig neu versuchen
           continue;
         }
@@ -618,9 +641,9 @@
     return updated;
   }
 
-  async function syncWith(store, remote) {
+  async function syncWith(store, remote, { paceMs = 0 } = {}) {
     const timeZone = (await remote.getTimeZone?.().catch(() => null)) || TIME_ZONE;
-    const optsFor = async () => ({ ...resolveSettings((await store.getConfig())?.settings), timeZone });
+    const optsFor = async () => ({ ...resolveSettings((await store.getConfig())?.settings), timeZone, paceMs });
     const optsBefore = await optsFor(); // lokaler Stand der Einstellungen, für Änderungen, die gerade gesendet werden
     const outboxBefore = await store.getOutbox();
     const dirtyIds = new Set(outboxBefore.map((e) => e.taskId));

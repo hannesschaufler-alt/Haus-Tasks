@@ -276,7 +276,7 @@
 
   async function sync() {
     await reconcileMissingEvents();
-    return root.SyncCore.syncWith(store, remote);
+    return root.SyncCore.syncWith(store, remote, { paceMs: 150 });
   }
 
   root.Offline = {

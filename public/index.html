@@ -1418,12 +1418,15 @@ async function syncNow(silent) {
       // Änderung, auch wenn das andere Gerät gar nicht aktiv war. Die Zusammenführung selbst läuft unverändert;
       // r.clashes steht weiter im Sync-Verlauf der Debug-Ansicht (#/debug).
       if (!silent) {
-        if (r.aborted) toast('Verbindung während der Übertragung verloren, der Rest folgt automatisch.');
+        if (r.abortReason?.retryable) toast('Google bremst gerade (viele Änderungen auf einmal). Nichts geht verloren, der Rest wird gleich automatisch gesendet.');
+        else if (r.aborted) toast('Verbindung während der Übertragung verloren, der Rest folgt automatisch.');
         else toast(`Sync fertig: ${r.pulled} übernommen, ${r.pushed} gesendet${r.calUpdated ? `, ${r.calUpdated} aus dem Google-Kalender ausgeblendet` : ''}.`);
       }
       // Die einmalige Umstellung auf den „unsichtbaren Sync“ läuft häppchenweise (siehe CAL_RECONCILE_LIMIT):
       // war das Limit erreicht, gleich der nächste Durchgang, nicht erst nach 5 Minuten.
       if (r.calUpdated >= 30 && !r.aborted) setTimeout(() => syncNow(true), 3000);
+      // Mengenbremse von Google: nach einer halben Minute die liegengebliebenen Änderungen erneut senden.
+      if (r.abortReason?.retryable) setTimeout(() => syncNow(true), 30000);
     } catch (e) {
       if (e.authRequired) {
         // Mitten in der Nutzung abgemeldet: nur ein Hinweis-Banner, die zwischengespeicherte Ansicht
