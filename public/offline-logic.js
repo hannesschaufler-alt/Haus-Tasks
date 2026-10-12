@@ -15,6 +15,11 @@
   const MAIN_LIST = 'tasks';
   // „Später“ ist eine ganz normale Liste (früher ein Status der Hauptliste): feste ID, damit alle Geräte dieselbe meinen.
   const LATER_LIST = 'spaeter';
+  // „Inbox“ ist eine Ansicht, keine echte Liste: ein Task „in der Inbox“ liegt in der Hauptliste mit Status „inbox“.
+  const INBOX_LIST = 'inbox';
+  function normalizePlacement(obj) {
+    return obj && obj.list_id === INBOX_LIST ? { ...obj, list_id: MAIN_LIST, bucket: 'inbox' } : obj;
+  }
 
   function uid() {
     if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -270,6 +275,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, shoppingItems, computeOrderUpdates,
+    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, normalizePlacement, shoppingItems, computeOrderUpdates,
   };
 });

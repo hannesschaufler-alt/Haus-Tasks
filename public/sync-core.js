@@ -77,7 +77,10 @@
   //   Tag; weitere teilen sich die am wenigsten belegten Plätze (dann eben schmalere Spalten).
   // lists: die Listen (Tasks, Einkauf, …) mit Name und Farbe; „tasks“ ist die Hauptliste und gibt es immer.
   const MAIN_LIST = 'tasks';
-  const DEFAULT_LISTS = [{ id: MAIN_LIST, name: 'Tasks', color: '9' }];
+  // „Inbox“ (Unsortiertes + was heute dran ist) und „Geplant“ (die frühere Hauptliste „Tasks“) gibt es immer.
+  // Die Inbox ist eine reine Ansicht: ihre Tasks liegen in der Hauptliste (list_id „tasks“, Status „inbox“ bzw. fällig heute).
+  const INBOX_LIST = 'inbox';
+  const DEFAULT_LISTS = [{ id: INBOX_LIST, name: 'Inbox', color: '6' }, { id: MAIN_LIST, name: 'Geplant', color: '9' }];
   const DEFAULT_SETTINGS = { untimedAtEndOfDay: true, lists: DEFAULT_LISTS };
   const SLOT_COUNT = 4;
   const SLOT_PER_ROW = 3;
@@ -118,7 +121,9 @@
   function resolveSettings(raw) {
     const s = { ...DEFAULT_SETTINGS, ...(raw && typeof raw === 'object' ? raw : {}) };
     let lists = Array.isArray(s.lists) ? s.lists.filter((l) => l && typeof l.id === 'string' && l.id && typeof l.name === 'string') : [];
-    if (!lists.some((l) => l.id === MAIN_LIST)) lists = [...DEFAULT_LISTS, ...lists]; // Hauptliste fehlt nie, auch wenn ein Gerät sie versehentlich verliert
+    // Inbox und Hauptliste fehlen nie, auch wenn ein Gerät sie versehentlich verliert (Inbox ganz vorn).
+    if (!lists.some((l) => l.id === MAIN_LIST)) lists = [DEFAULT_LISTS[1], ...lists];
+    if (!lists.some((l) => l.id === INBOX_LIST)) lists = [DEFAULT_LISTS[0], ...lists];
     return { ...s, lists };
   }
 

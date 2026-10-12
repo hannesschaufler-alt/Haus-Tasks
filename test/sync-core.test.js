@@ -984,10 +984,12 @@ test('Lokale Tasks aus einer Version ohne Schalter werden beim nächsten Sync ab
 
 // --- Listen (Tasks, Einkauf, …) ---
 
-test('Einstellungen: Hauptliste „Tasks“ gibt es immer, auch wenn gespeicherte Listen sie nicht enthalten oder kaputt sind', () => {
-  assert.deepStrictEqual(S.resolveSettings(undefined).lists, [{ id: 'tasks', name: 'Tasks', color: '9' }]);
+test('Einstellungen: Inbox und Hauptliste „Geplant“ gibt es immer, auch wenn gespeicherte Listen sie nicht enthalten oder kaputt sind', () => {
+  assert.deepStrictEqual(S.resolveSettings(undefined).lists.map((l) => [l.id, l.name]), [['inbox', 'Inbox'], ['tasks', 'Geplant']]);
   const lists = S.resolveSettings({ lists: [{ id: 'k', name: 'Küche', color: '4' }, { kaputt: true }, null] }).lists;
-  assert.deepStrictEqual(lists.map((l) => l.id), ['tasks', 'k']);
+  assert.deepStrictEqual(lists.map((l) => l.id), ['inbox', 'tasks', 'k']);
+  const umsortiert = S.resolveSettings({ lists: [{ id: 'tasks', name: 'Tasks', color: '9' }, { id: 'inbox', name: 'Eingang', color: '1' }] }).lists;
+  assert.deepStrictEqual(umsortiert.map((l) => l.name), ['Tasks', 'Eingang'], 'vorhandene Namen und Reihenfolge bleiben');
   assert.strictEqual(S.resolveSettings({ untimedAtEndOfDay: false }).untimedAtEndOfDay, false);
 });
 
@@ -1017,7 +1019,7 @@ test('Listen werden über das Konfigurations-Event geteilt', async () => {
   const b = fakeStore();
   await S.syncWith(a, remote);
   await S.syncWith(b, remote);
-  assert.deepStrictEqual(S.resolveSettings((await b.getConfig()).settings).lists.map((l) => l.name), ['Tasks', 'Einkauf']);
+  assert.deepStrictEqual(S.resolveSettings((await b.getConfig()).settings).lists.map((l) => l.name), ['Inbox', 'Tasks', 'Einkauf']);
 });
 
 test('Ein Termin, den eine ältere App-Version auf den versteckten Tag zurückgeschrieben hat, liefert kein falsches Fälligkeitsdatum', async () => {

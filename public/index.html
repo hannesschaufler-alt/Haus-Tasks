@@ -161,6 +161,13 @@
   .task.manual { grid-template-columns: auto auto 1fr auto; }
   .task.manual .chk-wrap { grid-column: 3 / -1; }
   .task.dragging { position: relative; z-index: 3; background: var(--chip); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+  .date-row { display: flex; gap: 6px; align-items: center; }
+  .date-row input { flex: 1; min-width: 0; }
+  .date-menu { position: fixed; z-index: 30; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 4px; min-width: 170px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.28); display: grid; }
+  .date-menu button { border: 0; background: none; color: var(--text); text-align: left; padding: 9px 12px; border-radius: 7px; font: inherit; cursor: pointer; }
+  .date-menu button:hover { background: var(--chip); }
+  .section.today { border-left: 3px solid var(--accent); padding-left: 10px; margin-left: -2px; background: color-mix(in srgb, var(--accent) 5%, transparent); border-radius: 0 10px 10px 0; }
   .row-drag { border: 0; background: none; color: var(--muted); cursor: grab; touch-action: none; padding: 4px 2px; margin: -4px 0; font-size: 16px; line-height: 1; user-select: none; -webkit-user-select: none; }
   .row-drag:active { cursor: grabbing; }
   .task .chk-wrap { grid-column: 2 / -1; }
@@ -300,13 +307,14 @@ const $ = (s, r = document) => r.querySelector(s);
 // verworfen.
 const MAIN_LIST = 'tasks';
 const LATER_LIST = 'spaeter';
+const INBOX_LIST = 'inbox'; // Ansicht: Unsortiertes + heute Fälliges (die Tasks selbst liegen in der Hauptliste „Geplant“)
 const WEEKDAYS = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
 const PRIO_RANK = { hoch: 0, mittel: 1, niedrig: 2 };
 const ASSIGNEES = ['Caro', 'Hannes'];
 const ASSIGNEE_INITIAL = { Caro: 'C', Hannes: 'H' };
 const ASSIGNEE_COLOR = { Caro: '#e05297', Hannes: '#2f6fed' }; // nur fürs Avatar-Kürzel, unabhängig von Kategoriefarben
 const state = {
-  tasks: [], cfg: null, status: null, assignees: new Set(), lists: [{ id: 'tasks', name: 'Tasks', color: '9' }], listId: 'tasks', showDone: false, sort: 'due', expanded: new Set(),
+  tasks: [], cfg: null, status: null, assignees: new Set(), lists: [{ id: 'inbox', name: 'Inbox', color: '6' }, { id: 'tasks', name: 'Geplant', color: '9' }], listId: 'inbox', todayOpen: true, showDone: false, sort: 'due', expanded: new Set(),
   lastSyncAt: null, lastSyncError: null, online: true, syncHistory: [], selecting: false, selected: new Set(),
   sortByList: (() => { try { return JSON.parse(localStorage.getItem('haus-tasks-sorts') || '{}'); } catch { return {}; } })(),
   todoOpen: true, laterOpen: false, // "Später" bewusst standardmäßig eingeklappt, weniger prominent als "Anstehend"
@@ -374,18 +382,38 @@ function dateChip(t) {
   const picker = h('input', { type: 'date', value: t.due_date || '', class: 'date-input', tabindex: -1, 'aria-hidden': 'true' });
   picker.addEventListener('click', (e) => e.stopPropagation());
   picker.addEventListener('change', () => quickSetDate(t, picker.value));
-  const openPicker = (e) => { e.stopPropagation(); picker.showPicker ? picker.showPicker() : picker.focus(); };
+  // Antippen öffnet ein kleines Menü (Heute / Morgen / Datum wählen / entfernen) statt direkt den Datumswähler des Geräts.
+  const openMenu = (e) => { e.stopPropagation(); openDateMenu(t, e.currentTarget, picker); };
 
-  if (!t.due_date) return h('span', { class: 'date-chip none', title: 'Datum setzen – antippen', onclick: openPicker }, '–', picker);
+  if (!t.due_date) return h('span', { class: 'date-chip none', title: 'Datum setzen – antippen', onclick: openMenu }, '–', picker);
   const d = new Date(t.due_date + 'T12:00:00');
   const diff = dayDiff(t.due_date);
   const cls = t.done ? ' done' : diff < 0 ? ' late' : diff <= 1 ? ' soon' : '';
   const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? ` ’${String(d.getFullYear()).slice(2)}` : '';
   const timeLabel = t.due_time && (t.due_end_time ? `${t.due_time}–${t.due_end_time}` : t.due_time);
   const label = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }).replace(/\.,\s*/, ' ') + yearSuffix + (timeLabel ? ` · ${timeLabel}` : '');
-  return h('span', { class: 'date-chip' + cls, title: fmtDate(t.due_date) + (timeLabel ? `, ${timeLabel} Uhr` : '') + (t.in_calendar ? ' · steht im Google-Kalender' : '') + ' – antippen zum Ändern', onclick: openPicker }, label, t.in_calendar && h('span', { class: 'cal-mark' }, '📅'), picker);
+  return h('span', { class: 'date-chip' + cls, title: fmtDate(t.due_date) + (timeLabel ? `, ${timeLabel} Uhr` : '') + (t.in_calendar ? ' · steht im Google-Kalender' : '') + ' – antippen zum Ändern', onclick: openMenu }, label, t.in_calendar && h('span', { class: 'cal-mark' }, '📅'), picker);
 }
 
+// Kleines Menü zum schnellen Datum setzen. Liegt bewusst direkt am <body> (position: fixed), weil die Liste ihre Ränder abschneidet.
+function closeDateMenu() { document.querySelector('.date-menu')?.remove(); }
+function openDateMenu(t, anchor, picker) {
+  closeDateMenu();
+  const set = (iso) => () => quickSetDate(t, iso);
+  const item = (label, fn) => h('button', { type: 'button', onclick: (e) => { e.stopPropagation(); closeDateMenu(); fn(); } }, label);
+  const menu = h('div', { class: 'date-menu', onclick: (e) => e.stopPropagation() },
+    item('Heute', set(todayStr())),
+    item('Morgen', set(Recurrence.addDays(todayStr(), 1))),
+    item('In einer Woche', set(Recurrence.addDays(todayStr(), 7))),
+    item('Datum wählen …', () => (picker.showPicker ? picker.showPicker() : picker.focus())),
+    t.due_date && item('Datum entfernen', set(null)));
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth, hgt = menu.offsetHeight;
+  menu.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + 'px';
+  menu.style.top = (r.bottom + hgt + 8 > innerHeight ? Math.max(8, r.top - hgt - 4) : r.bottom + 4) + 'px';
+  setTimeout(() => document.addEventListener('click', closeDateMenu, { once: true }), 0);
+}
 
 // --- Sortieren & Filtern ---
 // Tasks ohne Datum sollen ganz oben stehen (leerer String sortiert vor jedem echten Datum), nicht ganz unten.
@@ -566,7 +594,6 @@ function openBulkForm() {
   const listSel = h('select', {}, keepOpt('– unverändert –'), state.lists.map((l) => h('option', { value: l.id }, l.name)));
   const who = h('select', {}, keepOpt('– unverändert –'), h('option', { value: '' }, 'Niemand'), ASSIGNEES.map((a) => h('option', { value: a }, a)));
   const prio = h('select', {}, keepOpt('– unverändert –'), cfg.priorities.map((p) => h('option', { value: p }, p)));
-  const bucket = h('select', {}, keepOpt('– unverändert –'), h('option', { value: 'todo' }, 'Anstehend'), h('option', { value: 'inbox' }, 'Inbox (noch einsortieren)'));
   const inCal = h('select', {}, keepOpt('– unverändert –'), h('option', { value: 'yes' }, 'Ja, anzeigen (Tasks ohne Datum nicht)'), h('option', { value: 'no' }, 'Nein, nur in der App'));
   const err = h('div', { class: 'error' });
   const form = $('#form');
@@ -581,8 +608,7 @@ function openBulkForm() {
     if (listSel.value !== KEEP) patch.list_id = listSel.value;
     if (who.value !== KEEP) patch.assignee = who.value || null;
     if (prio.value !== KEEP) patch.priority = prio.value;
-    if (bucket.value !== KEEP) patch.bucket = bucket.value;
-    if (patch.list_id && patch.list_id !== MAIN_LIST) delete patch.bucket; // Inbox gibt es nur in der Hauptliste
+    if (patch.list_id === MAIN_LIST) patch.bucket = 'todo'; // aus der Inbox heraus nach „Geplant“
     if (inCal.value !== KEEP) patch.in_calendar = inCal.value === 'yes';
     if (!Object.keys(patch).length) { err.textContent = 'Nichts zum Ändern ausgewählt.'; return; }
     const { ok, errors } = await applyBulk(ids, patch);
@@ -596,10 +622,10 @@ function openBulkForm() {
   form.replaceChildren(
     h('h3', {}, `${ids.length} Task${ids.length === 1 ? '' : 's'} bearbeiten`),
     h('div', { class: 'hint' }, 'Nur was du hier änderst, wird bei allen ausgewählten Tasks gesetzt – alles andere bleibt unverändert.'),
-    field('Datum', date, h('label', { class: 'inline-check' }, clearDate, ' Datum entfernen')),
+    field('Datum', h('div', { class: 'date-row' }, date, h('button', { type: 'button', class: 'btn small', title: 'Datum auf heute setzen', onclick: () => { clearDate.checked = false; date.disabled = false; date.value = todayStr(); } }, 'Heute')),
+      h('label', { class: 'inline-check' }, clearDate, ' Datum entfernen')),
     h('div', { class: 'row2' }, field('Liste', listSel), field('In Google Kalender', inCal)),
     h('div', { class: 'row2' }, field('Zuständigkeit', who), field('Priorität', prio)),
-    field('Status (nur Liste „' + (state.lists.find((l) => l.id === MAIN_LIST)?.name || 'Tasks') + '“)', bucket),
     err,
     h('div', { class: 'actions' },
       h('span'),
@@ -666,6 +692,15 @@ async function migrateLater() {
   if (migratingLater) return;
   migratingLater = true;
   try {
+    // Einmalig: die frühere Hauptliste „Tasks“ heißt jetzt „Geplant“ (nur wenn sie noch den Standardnamen hat; die Inbox kommt
+    // von selbst dazu, siehe resolveSettings). Gemeinsame Einstellung, gilt für alle Geräte.
+    const cfgNow = await Offline.getSettings();
+    if (!cfgNow.plannedRenamed) {
+      await Offline.setSettings({ lists: cfgNow.lists.map((l) => (l.id === MAIN_LIST && l.name === 'Tasks' ? { ...l, name: 'Geplant' } : l)), plannedRenamed: true });
+      await refreshLists();
+      render();
+      syncNow(true);
+    }
     const old = state.tasks.filter((t) => t.bucket === 'later');
     // Die Liste „Später“ gibt es nach der Umstellung einmalig immer (auch leer); wer sie danach löscht, bekommt sie nicht
     // gegen seinen Willen zurück (laterMigrated, gemeinsame Einstellung).
@@ -756,8 +791,8 @@ function initQuickCapture() {
     input.value = ''; // sofort leeren, damit man ohne Wartezeit den nächsten Eintrag tippen kann
     quickCaptureChain = quickCaptureChain.then(async () => {
       try {
-        // In der Hauptliste landet alles erst in der Inbox, in jeder anderen Liste direkt als Eintrag.
-        await Offline.mutate('task', 'create', { input: { title, list_id: state.listId, bucket: state.listId === MAIN_LIST ? 'inbox' : 'todo' } });
+        // Die Inbox nimmt Unsortiertes auf; in jeder anderen Liste landet der Eintrag direkt dort.
+        await Offline.mutate('task', 'create', { input: { title, list_id: state.listId, bucket: state.listId === INBOX_LIST ? 'inbox' : 'todo' } });
         await reload();
         kickSync();
       } catch (err) {
@@ -791,15 +826,18 @@ function inboxRow(t) {
     h('span', { class: 'title', onclick: () => openForm(t) }, t.title),
     h('div', { class: 'actions' },
       h('button', { class: 'badge list-move ok', title: '2-Minuten-Regel: gleich erledigt', onclick: () => completeFromInbox(t) }, '✓'),
-      h('button', { class: 'badge list-move', title: 'Zu To Do', onclick: () => triageInbox(t, { bucket: 'todo' }) }, 'To Do'),
+      h('button', { class: 'badge list-move', title: 'Heute erledigen (Datum = heute)', onclick: () => triageInbox(t, { bucket: 'todo', due_date: todayStr() }) }, 'Heute'),
+      h('button', { class: 'badge list-move', title: 'In die Liste „Geplant“', onclick: () => triageInbox(t, { bucket: 'todo' }) }, 'Geplant'),
       h('button', { class: 'badge list-move', title: 'In die Liste „Später“', onclick: () => moveToLater(t) }, 'Später'),
       h('button', { class: 'icon-btn', title: 'Verwerfen', onclick: () => removeTask(t) }, '✕')));
 }
 
 function inboxSection() {
-  const items = state.tasks.filter((t) => (t.bucket || 'todo') === 'inbox').sort(newestCmp);
+  const items = state.tasks.filter((t) => listOf(t) === MAIN_LIST && t.bucket === 'inbox').sort(newestCmp);
   if (!items.length) return null;
-  return h('div', { class: 'inbox-list' }, items.map(inboxRow));
+  return h('div', { class: 'section' },
+    h('div', { class: 'section-header static' }, h('strong', {}, `Zu sortieren (${items.length})`)),
+    h('div', { class: 'inbox-list' }, items.map(inboxRow)));
 }
 
 // Klappbare Abschnitts-Überschrift – hält "Später" bewusst unauffällig (standardmäßig eingeklappt),
@@ -812,12 +850,16 @@ function sectionHeader(title, count, open, onToggle) {
 
 function homePage() {
   const list = currentList();
+  const inbox = list.id === INBOX_LIST;
   const main = list.id === MAIN_LIST;
-  const mine = state.tasks.filter((t) => listOf(t) === list.id);
-  // Hauptliste: „Anstehend“, die Inbox steht separat darüber. Alle anderen Listen (auch „Später“) kennen nur einen Bereich.
-  const pool = main ? mine.filter((t) => (t.bucket || 'todo') !== 'inbox') : mine;
+  // Die Hauptliste „Geplant“ zeigt, was bald ansteht – aber weder heute noch (in „Später“) auf später verschoben. Alles, was
+  // heute (oder überfällig) dran ist, steht stattdessen in der Inbox im Abschnitt „Heute“.
+  const inMain = state.tasks.filter((t) => listOf(t) === MAIN_LIST && t.bucket !== 'inbox');
+  const pool = inbox ? inMain.filter(isTodayTask) : main ? inMain.filter((t) => !isTodayTask(t)) : state.tasks.filter((t) => listOf(t) === list.id);
   const openCount = pool.filter((t) => !t.done).length;
   const filtered = pool.filter((t) => !state.assignees.size || state.assignees.has(t.assignee));
+  const emptyText = pool.length ? 'Keine Tasks für diesen Filter.'
+    : inbox ? 'Für heute ist nichts dran.' : main ? 'Noch nichts geplant. Sortiere etwas aus der Inbox hierher.' : `„${list.name}“ ist noch leer. Tipp oben etwas ein!`;
   const body = h('div', {},
     h('div', { class: 'toolbar' },
       h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) },
@@ -831,12 +873,13 @@ function homePage() {
       } }, Object.entries(SORTS).map(([k, s]) => h('option', { value: k, selected: k === currentSortKey() }, s.label))),
       doneToggle()),
     h('div', { class: 'filters' }, chipGroup('Wer', ASSIGNEES, state.assignees)),
-    taskList(filtered, mine.length ? 'Keine Tasks für diesen Filter.' : (main ? 'Noch keine Tasks. Tipp oben etwas ein!' : `„${list.name}“ ist noch leer. Tipp oben etwas ein!`)));
-  const open = !main || state.todoOpen;
+    taskList(filtered, emptyText));
+  // In der Inbox ist „Heute“ ein ein-/ausklappbarer, leicht abgesetzter Abschnitt unter dem Unsortierten.
+  const open = !inbox || state.todayOpen;
   return h('div', {},
-    main && inboxSection(),
-    h('div', { class: 'section' },
-      main ? sectionHeader('Anstehend', openCount, state.todoOpen, () => { state.todoOpen = !state.todoOpen; render(); })
+    inbox && inboxSection(),
+    h('div', { class: 'section' + (inbox ? ' today' : '') },
+      inbox ? sectionHeader('Heute', openCount, state.todayOpen, () => { state.todayOpen = !state.todayOpen; render(); })
         : h('div', { class: 'section-header static' }, h('strong', {}, `${list.name} (${openCount})`)),
       open && body),
     state.selecting && selectBar(open ? sorted(filtered).map((t) => t.id) : []));
@@ -851,12 +894,16 @@ const byCreatedAsc = (a, b) => (a.created_at || '').localeCompare(b.created_at |
 // Liegen als gemeinsame Einstellung im versteckten Konfigurations-Termin (settings.lists, siehe sync-core.js) und
 // wandern so zu allen Geräten; jeder Task trägt seine Liste in list_id. Ein Task mit unbekannter Liste (z. B. auf einem
 // anderen Gerät gelöscht) erscheint in der Hauptliste, statt zu verschwinden.
-const listOf = (t) => (state.lists.some((l) => l.id === t.list_id) ? t.list_id : MAIN_LIST);
+const listOf = (t) => (t.list_id !== INBOX_LIST && state.lists.some((l) => l.id === t.list_id) ? t.list_id : MAIN_LIST);
+// Wo ein Task im Formular steht: Hauptliste mit Status „inbox“ = Inbox.
+const placeOf = (t) => (listOf(t) === MAIN_LIST && t.bucket === 'inbox' ? INBOX_LIST : listOf(t));
+// „Heute“: offen und heute oder früher fällig (überfällig zählt mit); erledigt nur, wenn heute fällig/erledigt.
+const isTodayTask = (t) => !!t.due_date && (t.done ? t.due_date === todayStr() : t.due_date <= todayStr());
 const currentList = () => state.lists.find((l) => l.id === state.listId) || state.lists[0];
 
 async function refreshLists() {
   state.lists = (await Offline.getSettings()).lists;
-  if (!state.lists.some((l) => l.id === state.listId)) state.listId = MAIN_LIST;
+  if (!state.lists.some((l) => l.id === state.listId)) state.listId = INBOX_LIST;
 }
 
 function setList(id) {
@@ -986,7 +1033,7 @@ function enableTabDrag(tab) {
 // Termine in Google); beim Umfärben ziehen die bestehenden Tasks mit.
 function openListForm(list) {
   const isNew = !list;
-  const main = list?.id === MAIN_LIST;
+  const main = list?.id === MAIN_LIST || list?.id === INBOX_LIST; // Grundausstattung: nicht löschbar
   const nameInput = h('input', { type: 'text', value: list?.name || '', required: true, maxLength: 30, placeholder: 'z. B. Einkaufsliste' });
   const used = new Set(state.lists.map((l) => l.color));
   const freeColor = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
@@ -1047,7 +1094,7 @@ function openListForm(list) {
     h('div', { class: 'field' }, h('label', {}, 'Farbe (so erscheinen die Tasks im Google-Kalender)'), picker.el),
     h('label', { for: 'optShop', class: 'inline-check', style: 'color:var(--text)' }, shopBox, h('span', {}, '🛒 Das ist meine Einkaufsliste')),
     h('div', { class: 'hint' }, 'Aus der Checkliste eines Tasks (z. B. den Zutaten eines Gerichts) lassen sich alle Punkte mit einem Klick auf diese Liste setzen. Ohne Markierung gilt die erste Liste mit „Einkauf“ im Namen.'),
-    !isNew && h('div', { class: 'hint' }, 'Beim Umfärben ziehen die offenen Tasks der Liste mit.' + (main ? ' Die Hauptliste „' + list.name + '“ kann nicht gelöscht werden; nur dort gibt es Inbox und „Später“.' : '')),
+    !isNew && h('div', { class: 'hint' }, 'Beim Umfärben ziehen die offenen Tasks der Liste mit.' + (main ? ' „Inbox“ und „Geplant“ gehören zur Grundausstattung und können nicht gelöscht werden.' : '')),
     err,
     h('div', { class: 'actions' },
       isNew || main ? h('span') : h('button', { type: 'button', class: 'btn danger', onclick: remove }, 'Liste löschen'),
@@ -1106,7 +1153,7 @@ function render() {
     renderDebugPage(view);
   } else {
     paintTabs();
-    const main = state.listId === MAIN_LIST;
+    const main = state.listId === INBOX_LIST;
     $('#quickInput').placeholder = main ? 'Idee oder Task eintippen, Enter zum Speichern …' : `Zu „${currentList().name}“ hinzufügen, Enter zum Speichern …`;
     view.replaceChildren(homePage());
   }
@@ -1239,9 +1286,7 @@ function openForm(task) {
   time.addEventListener('change', () => { const had = !endTime.disabled; syncTimeFields(); if (time.value && !had) inCal.checked = true; });
   const prio = h('select', {}, cfg.priorities.map((p) => h('option', { value: p, selected: p === t.priority }, p)));
   // Status = in welchem Bereich der Startseite der Task liegt (früher nur per Schnellknopf in der Zeile änderbar).
-  const bucketSel = h('select', {}, [['todo', 'Anstehend'], ['inbox', 'Inbox (noch einsortieren)']]
-    .map(([v, l]) => h('option', { value: v, selected: (t.bucket || 'todo') === v }, l)));
-  const listSel = h('select', {}, state.lists.map((l) => h('option', { value: l.id, selected: l.id === listOf(t) }, l.name)));
+  const listSel = h('select', {}, state.lists.map((l) => h('option', { value: l.id, selected: l.id === placeOf(t) }, l.name)));
   const who = makeAssigneePicker(t.assignee);
   const notes = h('textarea', { rows: 3 }, t.notes || '');
   notes.value = t.notes || '';
@@ -1283,7 +1328,7 @@ function openForm(task) {
       : ty === 'monthly_day' ? { type: ty, interval: iv, day: Number(mday.value) } : { type: ty, interval: iv };
     const body = { title: title.value, due_date: date.value || null, due_time: date.value && time.value ? time.value : null,
       due_end_time: date.value && time.value && endTime.value ? endTime.value : null,
-      assignee: who.get(), priority: prio.value, list_id: listSel.value, bucket: listSel.value === MAIN_LIST ? bucketSel.value : 'todo',
+      assignee: who.get(), priority: prio.value, list_id: listSel.value, bucket: listSel.value === INBOX_LIST ? 'inbox' : (task && placeOf(task) === INBOX_LIST ? 'todo' : (task?.bucket || 'todo')),
       in_calendar: !!date.value && inCal.checked, notes: notes.value, checklist: chk.get(), recurrence };
     // Bei einer Bearbeitung nur die tatsächlich geänderten Felder senden (siehe diffPatch); beim Neuanlegen
     // gibt es noch keine Vorversion, da geht das komplette Formular raus.
@@ -1304,17 +1349,13 @@ function openForm(task) {
     (task.google_updated ? ` · ${new Date(task.google_updated).toLocaleString('de-DE')}` : ''));
 
   const field = (label, ...ctl) => h('div', { class: 'field' }, h('label', {}, label), ...ctl);
-  // Inbox/Anstehend gibt es nur in der Hauptliste.
-  const statusField = field('Status', bucketSel);
-  const syncStatus = () => { statusField.hidden = listSel.value !== MAIN_LIST; };
-  listSel.addEventListener('change', syncStatus);
-  syncStatus();
+  const todayBtn = h('button', { type: 'button', class: 'btn small', title: 'Datum auf heute setzen', onclick: () => { date.value = todayStr(); date.dispatchEvent(new Event('change')); } }, 'Heute');
   form.onsubmit = save;
   form.replaceChildren(
     h('h3', {}, task ? 'Task bearbeiten' : 'Neuer Task'),
     syncInfo,
     field('Titel', title),
-    h('div', { class: 'row2' }, field('Datum', date), field('Uhrzeit (optional)', time)),
+    h('div', { class: 'row2' }, field('Datum', h('div', { class: 'date-row' }, date, todayBtn)), field('Uhrzeit (optional)', time)),
     field('Ende (optional, sonst +1 Std.)', endTime),
     h('label', { for: 'optInCal', class: 'inline-check cal-check' }, inCal, h('span', {}, 'In Google Kalender anzeigen'),
       h('small', {}, 'Ohne Haken bleibt der Task nur in der App sichtbar und wird unsichtbar zwischen den Geräten abgeglichen.')),
@@ -1322,7 +1363,6 @@ function openForm(task) {
     recOpts,
     field('Zuständigkeit', who.el),
     h('div', { class: 'row2' }, field('Priorität', prio), field('Liste', listSel)),
-    statusField,
     field('Notizen', notes),
     field('Checkliste (Enter = nächster Punkt, mehrzeiligen Text einfügen = mehrere Punkte)', chk.el),
     err,
@@ -1576,7 +1616,7 @@ async function boot() {
     await Offline.saveConfig(cfg);
   }
   state.cfg = { categories: cfg.categories, locations: cfg.locations, priorities: PRIORITIES, colors: COLORS };
-  try { state.listId = localStorage.getItem('haus-tasks-list') || MAIN_LIST; } catch { /* egal */ }
+  try { state.listId = localStorage.getItem('haus-tasks-list') || INBOX_LIST; } catch { /* egal */ }
   await refreshLists();
   await reload();
   migrateLater();

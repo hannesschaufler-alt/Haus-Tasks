@@ -168,23 +168,25 @@
 
     if (kind === 'task') {
       if (op === 'create') {
-        const { task, tasks } = L.createTask(raw, args.input, cfg.categories || {}, listColorsOf(cfg));
+        const input = L.normalizePlacement(args.input);
+        const { task, tasks } = L.createTask(raw, input, cfg.categories || {}, listColorsOf(cfg));
         await saveRawTasks(tasks);
-        await enqueue({ kind, op, taskId: task.id, patch: args.input });
+        await enqueue({ kind, op, taskId: task.id, patch: input });
         return task;
       }
       if (op === 'update') {
         const before = raw.find((t) => t.id === args.id);
-        const { task, tasks } = L.updateTask(raw, args.id, args.patch, cfg.categories || {}, listColorsOf(cfg));
+        const argsPatch = L.normalizePlacement(args.patch);
+        const { task, tasks } = L.updateTask(raw, args.id, argsPatch, cfg.categories || {}, listColorsOf(cfg));
         await saveRawTasks(tasks);
         // updateTask() kann Felder selbst mitändern (z. B. die automatische Später→To-Do-Beförderung bei
         // einem neu gesetzten Datum, siehe offline-logic.js) – die müssen mit in den Sync, auch wenn sie
         // nicht im ursprünglichen Patch standen, sonst weicht der lokale Stand vom Google-Stand ab.
         // Gilt ebenso für die aus einem Kategoriewechsel abgeleitete Farbe und das Mitlöschen von Uhrzeit/Endzeit
         // beim Entfernen des Datums – sonst bliebe bei Google die alte Farbe bzw. Uhrzeit stehen.
-        const patch = { ...args.patch };
+        const patch = { ...argsPatch };
         for (const k of ['bucket', 'list_id', 'color', 'due_time', 'due_end_time', 'in_calendar']) {
-          if (!(k in args.patch) && (task[k] ?? null) !== (before?.[k] ?? null)) patch[k] = task[k] ?? null;
+          if (!(k in argsPatch) && (task[k] ?? null) !== (before?.[k] ?? null)) patch[k] = task[k] ?? null;
         }
         await enqueue({ kind, op, taskId: args.id, patch, baseUpdatedAt: before?.updated_at });
         return task;

@@ -316,3 +316,12 @@ test('Wieder aktiviert und erneut abgehakt: keine „Invalid time value“-Fehle
   assert.strictEqual(k.task.done, true);
   assert.strictEqual(k.created, null);
 });
+
+test('Inbox ist ein Ziel, kein Ort: normalizePlacement macht daraus Hauptliste + Status „inbox“', () => {
+  assert.deepStrictEqual(L.normalizePlacement({ list_id: 'inbox', title: 'a' }), { list_id: 'tasks', bucket: 'inbox', title: 'a' });
+  assert.deepStrictEqual(L.normalizePlacement({ list_id: 'einkauf' }), { list_id: 'einkauf' });
+  const t = L.createTask([], L.normalizePlacement({ title: 'Idee', list_id: 'inbox' }), CATS).task;
+  assert.deepStrictEqual([t.list_id, t.bucket], ['tasks', 'inbox']);
+  const { task } = L.updateTask([t], t.id, L.normalizePlacement({ list_id: 'tasks', bucket: 'todo' }), CATS);
+  assert.strictEqual(task.bucket, 'todo');
+});
