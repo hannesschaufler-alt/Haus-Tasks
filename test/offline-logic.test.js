@@ -58,8 +58,13 @@ test('Alter Status „later“ (vor der Liste „Später“): wird beim Anfassen
   assert.deepStrictEqual([t2.list_id, t2.bucket], ['tasks', 'todo']);
 });
 
-test('Serie ohne Datum wird abgelehnt, mit Datum normalisiert', () => {
-  assert.throws(() => L.createTask([], { title: 'X', recurrence: { type: 'weekly' } }, CATS), /Datum/);
+test('Serie ohne Datum ist erlaubt (Folgetermin ab dem Tag des Abhakens), mit Datum wird die Regel normalisiert', () => {
+  const ohne = L.createTask([], { title: 'X', recurrence: { type: 'yearly', interval: 10 } }, CATS).task;
+  assert.strictEqual(ohne.due_date, null);
+  assert.strictEqual(ohne.recurrence.type, 'yearly');
+  assert.ok(ohne.series_id);
+  assert.doesNotThrow(() => L.updateTask([ohne], ohne.id, { title: 'Y' }, CATS), 'Bearbeiten einer datumslosen Serie geht');
+  assert.doesNotThrow(() => L.updateTask([ohne], ohne.id, { due_date: null }, CATS));
   const { task } = L.createTask([], { title: 'X', due_date: '2031-09-09', recurrence: { type: 'monthly_weekday' } }, CATS);
   assert.deepStrictEqual([task.recurrence.nth, task.recurrence.weekday], [2, 2]); // 2. Dienstag, aus dem Datum abgeleitet
   assert.ok(task.series_id);
@@ -283,4 +288,31 @@ test('Manuelle Reihenfolge: Tasks ohne Position, zu kleine Lücke oder widerspr�
   assert.deepStrictEqual(eng.map((u) => u.order), [1024, 2048, 3072]);
   const wid = L.computeOrderUpdates([{ id: 'a', order: 5 }, { id: 'x', order: 1 }, { id: 'b', order: 3 }], 'x');
   assert.ok(wid.length >= 2, 'bei Widerspruch alle neu');
+});
+
+test('Serie ohne Fälligkeitsdatum: beim Abhaken zählt der Tag des Abhakens, der Folgetermin entsteht trotzdem', () => {
+  const today = new Date().toLocaleDateString('sv-SE');
+  const { task, tasks } = L.createTask([], { title: 'Rauchmelder tauschen' }, CATS);
+  const alt = { ...task, recurrence: { type: 'yearly', interval: 10 } }; // ältere Serie: ohne Datum, ohne Ankerwerte
+  const r = L.setDone([alt], alt.id, true);
+  assert.strictEqual(r.task.due_date, today, 'der erledigte Task bekommt das heutige Datum');
+  assert.ok(r.created, 'Folgetermin wurde angelegt');
+  assert.strictEqual(r.created.due_date, `${Number(today.slice(0, 4)) + 10}${today.slice(4)}`, 'zehn Jahre nach dem Abhaken');
+  assert.deepStrictEqual([r.task.recurrence.month, r.task.recurrence.day], [Number(today.slice(5, 7)), Number(today.slice(8))], 'Ankerwerte ergänzt');
+  assert.strictEqual(r.created.done, false);
+  assert.strictEqual(r.task.next_task_id, r.created.id);
+  assert.ok(tasks);
+});
+
+test('Wieder aktiviert und erneut abgehakt: keine „Invalid time value“-Fehler, auch bei Serien ohne Ankerwerte', () => {
+  const { task } = L.createTask([], { title: 'Rauchmelder' }, CATS);
+  const base = { ...task, due_date: '2026-10-11', recurrence: { type: 'yearly', interval: 10 } }; // Datum heute, Regel ohne Monat/Tag
+  assert.doesNotThrow(() => L.setDone([base], base.id, true));
+  const r = L.setDone([base], base.id, true);
+  assert.strictEqual(r.created.due_date, '2036-10-11');
+  // Kaputte Regel: Erledigen funktioniert trotzdem, nur ohne Folgetermin
+  const kaputt = { ...task, recurrence: { type: 'unbekannt' } };
+  const k = L.setDone([kaputt], kaputt.id, true);
+  assert.strictEqual(k.task.done, true);
+  assert.strictEqual(k.created, null);
 });

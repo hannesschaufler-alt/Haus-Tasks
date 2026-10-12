@@ -199,6 +199,8 @@
         // Beim Wiedereröffnen setzt setDone() außerdem die Checkliste zurück – auch das muss mit in den Patch.
         const donePatch = { done: args.done, due_date: task.due_date };
         if (JSON.stringify(before?.checklist ?? []) !== JSON.stringify(task.checklist ?? [])) donePatch.checklist = task.checklist;
+        // Eine Serie ohne Ankerwerte bekommt sie beim Abhaken ergänzt (siehe setDone() in offline-logic.js).
+        if (JSON.stringify(before?.recurrence ?? null) !== JSON.stringify(task.recurrence ?? null)) donePatch.recurrence = task.recurrence;
         await enqueue({ kind, op, taskId: args.id, patch: donePatch, baseUpdatedAt: before?.updated_at });
         // Ein Folgetermin einer Serie entsteht rein lokal und braucht einen eigenen Anlege-Auftrag –
         // sync-core.js kennt Serien nicht, es sendet nur, was in der Warteschlange steht.

@@ -114,6 +114,7 @@ async function doneLocal(store, id, done) {
   // Wie Offline.mutate(): setDone() befüllt due_date beim Abhaken eines datumslosen Tasks, das muss mit.
   const patch = { done, due_date: task.due_date };
   if (JSON.stringify(before.checklist ?? []) !== JSON.stringify(task.checklist ?? [])) patch.checklist = task.checklist; // wie Offline.mutate()
+  if (JSON.stringify(before.recurrence ?? null) !== JSON.stringify(task.recurrence ?? null)) patch.recurrence = task.recurrence;
   await store.enqueue('done', id, patch, before.updated_at);
   // Ein Folgetermin einer Serie entsteht lokal und braucht einen eigenen „Anlegen“-Auftrag –
   // push() weiß nichts von Serien, es sendet nur, was in der Warteschlange steht.

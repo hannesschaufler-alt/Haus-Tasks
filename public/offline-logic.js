@@ -31,7 +31,7 @@
     if (!title) throw new Error('Titel fehlt');
     const category = input.category || null;
     const recurrence = input.recurrence ? Recurrence.normalizeRule(input.recurrence, input.due_date) : null;
-    if (recurrence && !input.due_date) throw new Error('Eine Serie braucht ein Datum');
+    // Eine Serie darf ohne Datum angelegt sein: beim Abhaken zählt dann der Tag des Abhakens (siehe setDone).
     const list_id = input.list_id || MAIN_LIST;
     const task = {
       id: uid(), // ohne zentrale Datenbank bekommt jeder Task hier seine endgültige ID, die sich nie mehr ändert
@@ -109,7 +109,6 @@
       next.recurrence = patch.recurrence ? Recurrence.normalizeRule(patch.recurrence, next.due_date) : null;
       if (next.recurrence && !next.series_id) next.series_id = uid();
     }
-    if (next.recurrence && !next.due_date) throw new Error('Eine Serie braucht ein Datum');
     if (next.due_time && !next.due_date) throw new Error('Eine Uhrzeit braucht ein Datum');
     return { task: next, tasks: tasks.map((t) => (t.id === id ? next : t)) };
   }
@@ -131,11 +130,23 @@
     let updated = { ...cur, done: !!done, done_at: done ? ts : null, due_date, checklist, updated_at: ts };
     let list = tasks.map((t) => (t.id === id ? updated : t));
     let created = null;
-    if (done && cur.recurrence && cur.due_date && !cur.next_task_id) {
-      const nextDate = Recurrence.nextOccurrence(cur.recurrence, cur.due_date, today());
+    // Serie: der Folgetermin entsteht ab dem alten Fälligkeitsdatum – hatte der Task keins, zählt der Tag des Abhakens
+    // (`due_date` oben). Die Regel bekommt ihre Ankerwerte (Monat/Tag usw.) aus diesem Datum, falls sie noch keine hat
+    // (ältere Serien ohne Datum); ohne sie ließe sich z. B. eine „jährlich“-Regel nicht berechnen („Invalid time value“).
+    const rule = done && cur.recurrence ? Recurrence.normalizeRule(cur.recurrence, due_date) : null;
+    let nextDate = null;
+    if (rule && !cur.next_task_id) {
+      try { nextDate = Recurrence.nextOccurrence(rule, due_date, today()); } catch { nextDate = null; } // kaputte Regel: erledigen geht trotzdem
+    }
+    if (rule && JSON.stringify(rule) !== JSON.stringify(cur.recurrence)) {
+      updated = { ...updated, recurrence: rule };
+      list = list.map((t) => (t.id === id ? updated : t));
+    }
+    if (nextDate) {
       created = {
         ...cur,
         id: uid(),
+        recurrence: rule,
         due_date: nextDate,
         checklist: cur.checklist.map((i) => ({ text: i.text, done: false })),
         done: false,
