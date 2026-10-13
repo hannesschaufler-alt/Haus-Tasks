@@ -210,6 +210,7 @@
           bucket: t.bucket || '', // GTD-Status (inbox/todo/later), siehe offline-logic.js
           list: t.list_id || MAIN_LIST, // Liste (siehe resolveSettings)
           order: Number.isFinite(t.order) ? String(t.order) : '', // Position bei manueller Sortierung
+          week: t.planned ? 'true' : '', // Speiseplan: steht auf dem Plan „Diese Woche“
         },
       },
     };
@@ -259,7 +260,7 @@
         time_slot: false, slot_index: null, done, color,
         category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
         notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
-        bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST, order: parseOrder(p.order),
+        bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST, order: parseOrder(p.order), planned: p.week === 'true',
         in_calendar: false, cal_migrate: false, hidden_date: isHiddenDate(startDate) ? startDate : null,
       };
     }
@@ -284,7 +285,7 @@
       title, due_date, due_time, due_end_time, time_slot, slot_index, done, color,
       category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
       notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
-      bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST, order: parseOrder(p.order),
+      bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST, order: parseOrder(p.order), planned: p.week === 'true',
       in_calendar, cal_migrate: own && p.cal !== 'show' && !in_calendar, hidden_date: null,
     };
   }

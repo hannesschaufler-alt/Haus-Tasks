@@ -325,3 +325,29 @@ test('Inbox ist ein Ziel, kein Ort: normalizePlacement macht daraus Hauptliste +
   const { task } = L.updateTask([t], t.id, L.normalizePlacement({ list_id: 'tasks', bucket: 'todo' }), CATS);
   assert.strictEqual(task.bucket, 'todo');
 });
+
+test('Speiseplan-Liste: Erkennung per Einstellung oder Name, Einkaufsliste nie', () => {
+  assert.strictEqual(L.isPlanList({ id: 'a', name: 'Essen' }), true);
+  assert.strictEqual(L.isPlanList({ id: 'a', name: 'Speiseplan' }), true);
+  assert.strictEqual(L.isPlanList({ id: 'a', name: 'Einkaufsliste' }), false);
+  assert.strictEqual(L.isPlanList({ id: 'a', name: 'Essen', plan: false }), false, 'ausdrückliches „aus“ gewinnt');
+  assert.strictEqual(L.isPlanList({ id: 'a', name: 'Küche', plan: true }), true);
+  assert.strictEqual(L.isPlanList({ id: 'a', name: 'Essen', shopping: true }), false);
+  assert.strictEqual(L.isPlanList(undefined), false);
+});
+
+test('Speiseplan: ein „gekochtes“ Gericht geht zurück in den Katalog (nicht geplant, nicht erledigt, Checkliste frisch); anderswo bleibt es erledigt', () => {
+  const dish = L.createTask([], { title: 'Pizza', list_id: 'essen', planned: true, checklist: [{ text: 'Teig', done: true }, { text: 'Käse', done: true }] }, CATS).task;
+  assert.strictEqual(dish.planned, true);
+  const r = L.setDone([dish], dish.id, true, { planListIds: ['essen'] });
+  assert.deepStrictEqual([r.task.done, r.task.planned, r.task.due_date], [false, false, null], 'weder erledigt noch mit Datum versehen');
+  assert.deepStrictEqual(r.task.checklist.map((i) => i.done), [false, false]);
+  assert.strictEqual(r.returnedToCatalog, true);
+  // andere Liste: normales Erledigen
+  const other = L.setDone([{ ...dish, list_id: 'tasks' }], dish.id, true, { planListIds: ['essen'] });
+  assert.strictEqual(other.task.done, true);
+  // Wieder öffnen (alter Haken): ganz normal, bleibt im Katalog
+  const old = { ...dish, done: true, planned: false };
+  const re = L.setDone([old], dish.id, false, { planListIds: ['essen'] });
+  assert.deepStrictEqual([re.task.done, re.task.planned], [false, false]);
+});

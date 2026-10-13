@@ -193,13 +193,15 @@
       }
       if (op === 'done') {
         const before = raw.find((t) => t.id === args.id);
-        const { task, tasks, created } = L.setDone(raw, args.id, args.done);
+        const planListIds = root.SyncCore.resolveSettings(cfg.settings).lists.filter(L.isPlanList).map((l) => l.id);
+        const { task, tasks, created } = L.setDone(raw, args.id, args.done, { planListIds });
         await saveRawTasks(tasks);
         // setDone() befüllt due_date beim Abhaken eines datumslosen Tasks mit dem heutigen Datum (siehe
         // offline-logic.js) – muss mit in den Patch, sonst überschreibt der Merge-vor-Patch-Mechanismus in
         // push() es beim Senden wieder mit dem alten (leeren) Stand.
         // Beim Wiedereröffnen setzt setDone() außerdem die Checkliste zurück – auch das muss mit in den Patch.
-        const donePatch = { done: args.done, due_date: task.due_date };
+        const donePatch = { done: task.done, due_date: task.due_date };
+        if (!!before?.planned !== !!task.planned) donePatch.planned = !!task.planned; // Speiseplan: gekochtes Gericht geht zurück in den Katalog
         if (JSON.stringify(before?.checklist ?? []) !== JSON.stringify(task.checklist ?? [])) donePatch.checklist = task.checklist;
         // Eine Serie ohne Ankerwerte bekommt sie beim Abhaken ergänzt (siehe setDone() in offline-logic.js).
         if (JSON.stringify(before?.recurrence ?? null) !== JSON.stringify(task.recurrence ?? null)) donePatch.recurrence = task.recurrence;

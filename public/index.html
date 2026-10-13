@@ -168,6 +168,14 @@
   .date-menu button { border: 0; background: none; color: var(--text); text-align: left; padding: 9px 12px; border-radius: 7px; font: inherit; cursor: pointer; }
   .date-menu button:hover { background: var(--chip); }
   .section.today { border-left: 3px solid var(--accent); padding-left: 10px; margin-left: -2px; background: color-mix(in srgb, var(--accent) 5%, transparent); border-radius: 0 10px 10px 0; }
+  .plan-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); background: var(--chip); border-bottom: 1px solid var(--line); }
+  .plan-head.week { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--card)); border-left: 3px solid var(--accent); }
+  .plan-head.cat { cursor: pointer; }
+  .plan-empty { padding: 12px; color: var(--muted); font-size: 13px; font-style: italic; border-bottom: 1px solid var(--line); }
+  .plan-add { width: 22px; height: 22px; min-width: 22px; border-radius: 50%; border: 2px dashed var(--ring); background: none; color: var(--ring); font-size: 14px; line-height: 1;
+    padding: 0; justify-self: center; align-self: center; cursor: pointer; display: grid; place-content: center; }
+  .plan-add:hover { border-color: var(--accent); color: var(--accent); }
   .row-drag { border: 0; background: none; color: var(--muted); cursor: grab; touch-action: none; padding: 4px 2px; margin: -4px 0; font-size: 16px; line-height: 1; user-select: none; -webkit-user-select: none; }
   .row-drag:active { cursor: grabbing; }
   .task .chk-wrap { grid-column: 2 / -1; }
@@ -314,7 +322,7 @@ const ASSIGNEES = ['Caro', 'Hannes'];
 const ASSIGNEE_INITIAL = { Caro: 'C', Hannes: 'H' };
 const ASSIGNEE_COLOR = { Caro: '#e05297', Hannes: '#2f6fed' }; // nur fürs Avatar-Kürzel, unabhängig von Kategoriefarben
 const state = {
-  tasks: [], cfg: null, status: null, assignees: new Set(), lists: [{ id: 'inbox', name: 'Inbox', color: '6' }, { id: 'tasks', name: 'Geplant', color: '9' }], listId: 'inbox', todayOpen: true, showDone: false, sort: 'due', expanded: new Set(),
+  tasks: [], cfg: null, status: null, assignees: new Set(), lists: [{ id: 'inbox', name: 'Inbox', color: '6' }, { id: 'tasks', name: 'Geplant', color: '9' }], listId: 'inbox', todayOpen: true, catalogOpen: true, showDone: false, sort: 'due', expanded: new Set(),
   lastSyncAt: null, lastSyncError: null, online: true, syncHistory: [], selecting: false, selected: new Set(),
   sortByList: (() => { try { return JSON.parse(localStorage.getItem('haus-tasks-sorts') || '{}'); } catch { return {}; } })(),
   todoOpen: true, laterOpen: false, // "Später" bewusst standardmäßig eingeklappt, weniger prominent als "Anstehend"
@@ -459,7 +467,7 @@ function sorted(list, sortFn = SORTS[currentSortKey()].fn) {
 // über Sortierung und Filter lässt sich trotzdem gezielt einschränken.
 // Löschen gibt's nur noch in der Detailansicht (siehe openForm) – hier an derselben Stelle stattdessen
 // die Zuständigkeit, damit auf einen Blick sichtbar bleibt, wer den Task übernommen hat.
-function taskRow(t, { handle = false } = {}) {
+function taskRow(t, { handle = false, plan = null } = {}) {
   // Auswahlmodus (Mehrfachbearbeitung): die ganze Zeile schaltet nur noch die Auswahl um, statt Abhaken,
   // Datum-Schnellwahl oder Detailansicht auszulösen.
   if (state.selecting) {
@@ -472,7 +480,9 @@ function taskRow(t, { handle = false } = {}) {
   // Einzeilig wie Asanas Listenansicht: Häkchen, Titel, rechts Checklisten-Stand, Datum, Zuständigkeit.
   return h('div', { class: 'task' + (handle ? ' manual' : '') + (t.done ? ' done' : ''), 'data-id': t.id },
     handle && h('button', { type: 'button', class: 'row-drag', title: 'Ziehen zum Sortieren' }, '⠿'),
-    h('input', { type: 'checkbox', checked: t.done, title: t.done ? 'Wieder öffnen' : 'Abhaken', onchange: (e) => toggleDone(t, e.target.checked) }),
+    plan === 'catalog'
+      ? h('button', { type: 'button', class: 'plan-add', title: 'Auf den Plan „Diese Woche“ setzen', onclick: (e) => { e.stopPropagation(); setPlanned(t, true); } }, '＋')
+      : h('input', { type: 'checkbox', checked: t.done, title: plan === 'week' ? 'Gekocht – zurück in den Katalog' : t.done ? 'Wieder öffnen' : 'Abhaken', onchange: (e) => toggleDone(t, e.target.checked) }),
     h('div', { class: 'main', onclick: () => openForm(t) },
       h('div', { class: 'title' }, t.title)),
     h('div', { class: 'right' },
@@ -510,6 +520,7 @@ function checklistView(t) {
 // Die Zutaten einer Checkliste (z. B. eines Gerichts) lassen sich mit einem Klick als einzelne Tasks auf die Einkaufsliste
 // setzen. Einkaufsliste = die Liste mit der Markierung „Das ist meine Einkaufsliste“ (✎ am Reiter), sonst die erste
 // Liste mit „Einkauf“ im Namen.
+const isPlanListId = (id) => OfflineLogic.isPlanList(state.lists.find((l) => l.id === id));
 const shoppingList = () => state.lists.find((l) => l.shopping) || state.lists.find((l) => /einkauf/i.test(l.name)) || null;
 const canSendToShopping = (t) => { const shop = shoppingList(); return !!shop && listOf(t) !== shop.id; };
 function sendToShoppingButton(getItems) {
@@ -648,7 +659,17 @@ function selectBar(visibleIds) {
 
 async function toggleDone(t, done) {
   try {
-    await Offline.mutate('task', 'done', { id: t.id, done });
+    const res = await Offline.mutate('task', 'done', { id: t.id, done });
+    await reload();
+    kickSync();
+    if (done && res && !res.done && t.planned) toast(`„${t.title}“ ist zurück im Katalog.`);
+  } catch (e) { toast(e.message); reload(); }
+}
+
+// Speiseplan: Gericht auf den Plan „Diese Woche“ setzen bzw. zurück in den Katalog (oben bzw. unten neu einsortiert).
+async function setPlanned(t, planned) {
+  try {
+    await Offline.mutate('task', 'update', { id: t.id, patch: { planned, order: null } });
     await reload();
     kickSync();
   } catch (e) { toast(e.message); reload(); }
@@ -701,6 +722,11 @@ async function migrateLater() {
       render();
       syncNow(true);
     }
+    // Speiseplan-Listen kennen kein „erledigt“ mehr (gekochte Gerichte gehen zurück in den Katalog): frühere Haken werden gelöst.
+    const planIds = new Set(cfgNow.lists.filter(OfflineLogic.isPlanList).map((l) => l.id));
+    const doneDishes = state.tasks.filter((x) => x.done && planIds.has(listOf(x)));
+    for (const t of doneDishes) await Offline.mutate('task', 'done', { id: t.id, done: false });
+    if (doneDishes.length) { await reload(); kickSync(); }
     const old = state.tasks.filter((t) => t.bucket === 'later');
     // Die Liste „Später“ gibt es nach der Umstellung einmalig immer (auch leer); wer sie danach löscht, bekommt sie nicht
     // gegen seinen Willen zurück (laterMigrated, gemeinsame Einstellung).
@@ -848,8 +874,63 @@ function sectionHeader(title, count, open, onToggle) {
     h('strong', {}, `${title} (${count})`));
 }
 
+// Speiseplan-Liste: EIN Raster mit zwei Abschnitten „Diese Woche“ und „Katalog“. Die Zeilen lassen sich per Griff innerhalb
+// und über die Abschnittsgrenze hinweg ziehen; wo eine Zeile landet, bestimmt, ob das Gericht auf dem Plan steht
+// (Task.planned). Die Abschnittsüberschriften zählen beim Ziehen als feste Marken (siehe attachSort, itemSel).
+function planPage(list) {
+  const mine = state.tasks.filter((t) => listOf(t) === list.id).sort(manualCmp);
+  const week = mine.filter((t) => t.planned);
+  const catalog = mine.filter((t) => !t.planned);
+  const canDrag = !state.selecting;
+  const el = h('div', { class: 'list plan' });
+  const head = (label, count, section, onclick) => h('div', { class: 'plan-head ' + section, 'data-section': section, onclick },
+    onclick && h('span', { class: 'toggle-icon' }, state.catalogOpen ? '−' : '+'), h('strong', {}, `${label} (${count})`));
+  el.append(head('Diese Woche', week.length, 'week'));
+  for (const t of week) el.append(taskRow(t, { handle: canDrag, plan: 'week' }));
+  if (!week.length) el.append(h('div', { class: 'plan-empty' }, 'Noch nichts geplant – zieh ein Gericht hierher oder tippe beim Gericht auf ＋.'));
+  el.append(head('Katalog', catalog.length, 'cat', () => { state.catalogOpen = !state.catalogOpen; render(); }));
+  if (state.catalogOpen) for (const t of catalog) el.append(taskRow(t, { handle: canDrag, plan: 'catalog' }));
+  if (canDrag) {
+    for (const row of el.querySelectorAll('.task.manual')) {
+      attachSort({ item: row, handle: row.querySelector('.row-drag'), container: el, itemSel: '.task.manual, .plan-head', axis: 'y', mode: 'now',
+        onDone: () => commitPlanOrder(el, row.dataset.id) });
+    }
+  }
+  return h('div', {},
+    h('div', { class: 'section' },
+      h('div', { class: 'section-header static' }, h('strong', {}, `${list.name}`)),
+      h('div', { class: 'toolbar' },
+        h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) }, state.selecting ? 'Auswahl beenden' : '☑ Auswählen')),
+      el),
+    state.selecting && selectBar(mine.map((t) => t.id)));
+}
+
+// Nach dem Ziehen: Abschnitt (vor oder nach der „Katalog“-Überschrift) bestimmt `planned`, die Reihenfolge innerhalb des Abschnitts `order`.
+async function commitPlanOrder(container, movedId) {
+  let section = 'week';
+  const seqs = { week: [], cat: [] };
+  for (const child of container.children) {
+    if (child.classList.contains('plan-head')) { section = child.dataset.section === 'cat' ? 'cat' : 'week'; continue; }
+    if (child.classList.contains('manual')) seqs[section].push(child.dataset.id);
+  }
+  const movedSection = seqs.week.includes(movedId) ? 'week' : 'cat';
+  const seq = seqs[movedSection].map((id) => state.tasks.find((t) => t.id === id)).filter(Boolean);
+  const moved = state.tasks.find((t) => t.id === movedId);
+  if (!moved) { render(); return; }
+  const patches = new Map(OfflineLogic.computeOrderUpdates(seq, movedId).map((u) => [u.id, { order: u.order }]));
+  const planned = movedSection === 'week';
+  if (!!moved.planned !== planned) patches.set(movedId, { ...(patches.get(movedId) || {}), planned });
+  if (!patches.size) { render(); return; }
+  try {
+    for (const [id, patch] of patches) await Offline.mutate('task', 'update', { id, patch });
+    await reload();
+    kickSync();
+  } catch (e) { toast(e.message); reload(); }
+}
+
 function homePage() {
   const list = currentList();
+  if (OfflineLogic.isPlanList(list)) return planPage(list);
   const inbox = list.id === INBOX_LIST;
   const main = list.id === MAIN_LIST;
   // Die Hauptliste „Geplant“ zeigt, was bald ansteht – aber weder heute noch (in „Später“) auf später verschoben. Alles, was
@@ -1039,11 +1120,22 @@ function openListForm(list) {
   const freeColor = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
   const picker = makeSwatches(list?.color || freeColor);
   const shopBox = h('input', { type: 'checkbox', id: 'optShop', checked: !!list?.shopping });
+  const planListBox = h('input', { type: 'checkbox', id: 'optPlanList', checked: OfflineLogic.isPlanList(list) });
+  // Gespeichert wird der Haken nur, wenn er von der Namenserkennung (siehe isPlanList) abweicht – sonst gilt weiter der Name.
+  // Bei einer neuen Liste folgt der Haken dem getippten Namen („Essen“ → an), bis man ihn selbst anfasst.
+  let planTouched = !!list;
+  planListBox.addEventListener('change', () => { planTouched = true; });
+  const withPlan = (lists, id) => lists.map((l) => {
+    if (l.id !== id) return l;
+    const { plan, ...rest } = l;
+    return planListBox.checked === OfflineLogic.isPlanList(rest) ? rest : { ...rest, plan: planListBox.checked };
+  });
   const withShopping = (lists, id) => lists.map((l) => {
     const { shopping, ...rest } = l;
     if (l.id === id) return shopBox.checked ? { ...rest, shopping: true } : rest;
     return shopBox.checked ? rest : l; // nur eine Liste ist die Einkaufsliste
   });
+  nameInput.addEventListener('input', () => { if (!planTouched) planListBox.checked = OfflineLogic.isPlanList({ name: nameInput.value }); });
   const err = h('div', { class: 'error' });
   const form = $('#form');
 
@@ -1063,11 +1155,11 @@ function openListForm(list) {
     try {
       if (isNew) {
         const created = { id: Math.random().toString(36).slice(2, 8), name, color: picker.get() };
-        await save(withShopping([...state.lists, created], created.id));
+        await save(withPlan(withShopping([...state.lists, created], created.id), created.id));
         setList(created.id);
       } else {
         const colorChanged = picker.get() !== list.color;
-        await save(withShopping(state.lists.map((l) => (l.id === list.id ? { ...l, name, color: picker.get() } : l)), list.id));
+        await save(withPlan(withShopping(state.lists.map((l) => (l.id === list.id ? { ...l, name, color: picker.get() } : l)), list.id), list.id));
         if (colorChanged) {
           for (const t of state.tasks.filter((x) => listOf(x) === list.id && !x.done)) await Offline.mutate('task', 'update', { id: t.id, patch: { color: picker.get() } });
           await reload();
@@ -1093,6 +1185,8 @@ function openListForm(list) {
     h('div', { class: 'field' }, h('label', {}, 'Name'), nameInput),
     h('div', { class: 'field' }, h('label', {}, 'Farbe (so erscheinen die Tasks im Google-Kalender)'), picker.el),
     h('label', { for: 'optShop', class: 'inline-check', style: 'color:var(--text)' }, shopBox, h('span', {}, '🛒 Das ist meine Einkaufsliste')),
+    h('label', { for: 'optPlanList', class: 'inline-check', style: 'color:var(--text)' }, planListBox, h('span', {}, '🍽 Speiseplan (oben „Diese Woche“, unten „Katalog“)')),
+    h('div', { class: 'hint' }, 'Gerichte lassen sich per Ziehen oder mit ＋ auf den Plan setzen. Hakt man ein geplantes Gericht ab („gekocht“), geht es zurück in den Katalog, mit frischer Checkliste. Ohne ausdrückliche Wahl erkennt die App Listen wie „Essen“ oder „Speiseplan“ am Namen.'),
     h('div', { class: 'hint' }, 'Aus der Checkliste eines Tasks (z. B. den Zutaten eines Gerichts) lassen sich alle Punkte mit einem Klick auf diese Liste setzen. Ohne Markierung gilt die erste Liste mit „Einkauf“ im Namen.'),
     !isNew && h('div', { class: 'hint' }, 'Beim Umfärben ziehen die offenen Tasks der Liste mit.' + (main ? ' „Inbox“ und „Geplant“ gehören zur Grundausstattung und können nicht gelöscht werden.' : '')),
     err,
@@ -1287,6 +1381,7 @@ function openForm(task) {
   const prio = h('select', {}, cfg.priorities.map((p) => h('option', { value: p, selected: p === t.priority }, p)));
   // Status = in welchem Bereich der Startseite der Task liegt (früher nur per Schnellknopf in der Zeile änderbar).
   const listSel = h('select', {}, state.lists.map((l) => h('option', { value: l.id, selected: l.id === placeOf(t) }, l.name)));
+  const planBox = h('input', { type: 'checkbox', id: 'optPlanned', checked: !!t.planned });
   const who = makeAssigneePicker(t.assignee);
   const notes = h('textarea', { rows: 3 }, t.notes || '');
   notes.value = t.notes || '';
@@ -1329,6 +1424,7 @@ function openForm(task) {
     const body = { title: title.value, due_date: date.value || null, due_time: date.value && time.value ? time.value : null,
       due_end_time: date.value && time.value && endTime.value ? endTime.value : null,
       assignee: who.get(), priority: prio.value, list_id: listSel.value, bucket: listSel.value === INBOX_LIST ? 'inbox' : (task && placeOf(task) === INBOX_LIST ? 'todo' : (task?.bucket || 'todo')),
+      planned: isPlanListId(listSel.value) ? planBox.checked : false,
       in_calendar: !!date.value && inCal.checked, notes: notes.value, checklist: chk.get(), recurrence };
     // Bei einer Bearbeitung nur die tatsächlich geänderten Felder senden (siehe diffPatch); beim Neuanlegen
     // gibt es noch keine Vorversion, da geht das komplette Formular raus.
@@ -1350,6 +1446,10 @@ function openForm(task) {
 
   const field = (label, ...ctl) => h('div', { class: 'field' }, h('label', {}, label), ...ctl);
   const todayBtn = h('button', { type: 'button', class: 'btn small', title: 'Datum auf heute setzen', onclick: () => { date.value = todayStr(); date.dispatchEvent(new Event('change')); } }, 'Heute');
+  const planField = h('label', { for: 'optPlanned', class: 'inline-check', style: 'color:var(--text)' }, planBox, h('span', {}, '🍽 Steht auf dem Plan „Diese Woche“'));
+  const syncPlan = () => { planField.hidden = !isPlanListId(listSel.value); };
+  listSel.addEventListener('change', syncPlan);
+  syncPlan();
   form.onsubmit = save;
   form.replaceChildren(
     h('h3', {}, task ? 'Task bearbeiten' : 'Neuer Task'),
@@ -1363,6 +1463,7 @@ function openForm(task) {
     recOpts,
     field('Zuständigkeit', who.el),
     h('div', { class: 'row2' }, field('Priorität', prio), field('Liste', listSel)),
+    planField,
     field('Notizen', notes),
     field('Checkliste (Enter = nächster Punkt, mehrzeiligen Text einfügen = mehrere Punkte)', chk.el),
     err,

@@ -17,6 +17,13 @@
   const LATER_LIST = 'spaeter';
   // „Inbox“ ist eine Ansicht, keine echte Liste: ein Task „in der Inbox“ liegt in der Hauptliste mit Status „inbox“.
   const INBOX_LIST = 'inbox';
+  // Speiseplan-Liste (z. B. „Essen“): oben „Diese Woche“ (Task.planned), unten der „Katalog“. Ausdrücklich per Listen-Einstellung
+  // (`plan`), sonst erkennt man sie am Namen (Essen, Speise…, Gericht…, Rezept…). Die Einkaufsliste ist es nie.
+  function isPlanList(list) {
+    if (!list || list.shopping) return false;
+    if (typeof list.plan === 'boolean') return list.plan;
+    return /essen|speise|gericht|rezept/i.test(list.name || '');
+  }
   function normalizePlacement(obj) {
     return obj && obj.list_id === INBOX_LIST ? { ...obj, list_id: MAIN_LIST, bucket: 'inbox' } : obj;
   }
@@ -51,6 +58,7 @@
       bucket: list_id !== MAIN_LIST ? 'todo' : BUCKETS.includes(input.bucket) ? input.bucket : 'todo',
       list_id,
       order: Number.isFinite(input.order) ? input.order : null, // Position bei manueller Sortierung (siehe computeOrderUpdates)
+      planned: !!input.planned, // Speiseplan: steht auf dem Plan „Diese Woche“ (siehe isPlanList)
       // „In Google Kalender anzeigen“: aus, außer der Task hat eine Uhrzeit (ein Termin gehört in den Kalender).
       // Ohne Datum gibt es nichts anzuzeigen. Siehe sync-core.js (HIDDEN_EPOCH).
       in_calendar: !!input.due_date && (input.in_calendar === undefined ? !!input.due_time : !!input.in_calendar),
@@ -120,11 +128,17 @@
 
   // Wie tasks.js: Beim ersten Abhaken eines Serientasks entsteht sofort der Folgetermin, ab dem alten
   // Fälligkeitsdatum. `next_task_id` verhindert einen zweiten Folgetermin bei erneutem Abhaken.
-  function setDone(tasks, id, done) {
+  function setDone(tasks, id, done, opts = {}) {
     const cur = findTask(tasks, id);
     if (!cur) throw new Error('Task nicht gefunden');
     if (cur.done === !!done) return { task: cur, tasks, created: null };
     const ts = nowIso();
+    // Speiseplan-Liste: Ein „gekochtes“ Gericht bleibt nicht erledigt liegen, sondern geht zurück in den Katalog – nicht mehr auf
+    // dem Plan, Checkliste (Zutaten) wieder frisch. So bleibt der Katalog vollständig.
+    if (done && (opts.planListIds || []).includes(cur.list_id || MAIN_LIST)) {
+      const back = { ...cur, done: false, done_at: null, planned: false, checklist: (cur.checklist || []).map((i) => ({ ...i, done: false })), updated_at: ts };
+      return { task: back, tasks: tasks.map((t) => (t.id === id ? back : t)), created: null, returnedToCatalog: true };
+    }
     // Ein datumsloser Task bekommt beim Abhaken das heutige Datum, sonst würde er in Google für immer
     // versteckt bleiben (siehe NO_DATE_PLACEHOLDER in sync-core.js) statt als erledigter Termin sichtbar
     // zu sein. Beim Rückgängig-Machen bleibt das Datum bewusst stehen (kein automatisches Zurücksetzen).
@@ -275,6 +289,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, normalizePlacement, shoppingItems, computeOrderUpdates,
+    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, isPlanList, normalizePlacement, shoppingItems, computeOrderUpdates,
   };
 });

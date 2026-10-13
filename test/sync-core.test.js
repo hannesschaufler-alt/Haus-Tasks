@@ -1134,3 +1134,21 @@ test('Dauerhaft abgelehnte Änderung (z. B. 400): verworfen und gemeldet, der n�
   await S.syncWith(store, remote);
   assert.strictEqual((await store.getRawTasks())[0].done, false, 'danach gilt wieder der Stand von Google – nicht dauerhaft Unterschiedliches');
 });
+
+test('Speiseplan: „Diese Woche“-Markierung (planned) wandert mit zu Google und zum zweiten Gerät', async () => {
+  const a = fakeStore();
+  const b = fakeStore();
+  const t = await createLocal(a, { title: 'Pizza', in_calendar: false, planned: true, list_id: 'essen' });
+  await createLocal(a, { title: 'Lasagne', in_calendar: false, list_id: 'essen' });
+  await S.syncWith(a, remote);
+  assert.strictEqual(evByTitle('Pizza').extendedProperties.private.week, 'true');
+  assert.strictEqual(evByTitle('Lasagne').extendedProperties.private.week, '');
+  await S.syncWith(b, remote);
+  const onB = await b.getRawTasks();
+  assert.strictEqual(onB.find((x) => x.title === 'Pizza').planned, true);
+  assert.strictEqual(onB.find((x) => x.title === 'Lasagne').planned, false);
+  await updateLocal(b, onB.find((x) => x.title === 'Pizza').id, { planned: false, order: null });
+  await S.syncWith(b, remote);
+  await S.syncWith(a, remote);
+  assert.strictEqual((await a.getRawTasks()).find((x) => x.id === t.id).planned, false);
+});
