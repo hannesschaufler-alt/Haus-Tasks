@@ -172,6 +172,10 @@
     color: var(--muted); background: var(--chip); border-bottom: 1px solid var(--line); }
   .plan-head.week { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--card)); border-left: 3px solid var(--accent); }
   .plan-head.cat { cursor: pointer; }
+  .plan-head.unassigned { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--card)); border-left: 3px solid var(--accent); }
+  .plan-hint { text-transform: none; letter-spacing: normal; font-size: 12px; color: var(--muted); }
+  .badge.cat-pick { border: 1px dashed var(--accent); background: none; color: var(--accent); cursor: pointer; font: inherit; font-size: 11.5px; padding: 1px 8px; }
+  .cat-menu { max-height: calc(100dvh - 24px); overflow-y: auto; }
   .plan-empty { padding: 12px; color: var(--muted); font-size: 13px; font-style: italic; border-bottom: 1px solid var(--line); }
   .plan-add { width: 22px; height: 22px; min-width: 22px; border-radius: 50%; border: 2px dashed var(--ring); background: none; color: var(--ring); font-size: 14px; line-height: 1;
     padding: 0; justify-self: center; align-self: center; cursor: pointer; display: grid; place-content: center; }
@@ -303,6 +307,7 @@
      (jedes baut aufs vorige auf). -->
 <script src="recurrence.js"></script>
 <script src="offline-logic.js"></script>
+<script src="shop-categories.js"></script>
 <script src="sync-core.js"></script>
 <script src="google-config.js"></script>
 <script src="auth.js"></script>
@@ -467,7 +472,7 @@ function sorted(list, sortFn = SORTS[currentSortKey()].fn) {
 // über Sortierung und Filter lässt sich trotzdem gezielt einschränken.
 // Löschen gibt's nur noch in der Detailansicht (siehe openForm) – hier an derselben Stelle stattdessen
 // die Zuständigkeit, damit auf einen Blick sichtbar bleibt, wer den Task übernommen hat.
-function taskRow(t, { handle = false, plan = null } = {}) {
+function taskRow(t, { handle = false, plan = null, shop = null } = {}) {
   // Auswahlmodus (Mehrfachbearbeitung): die ganze Zeile schaltet nur noch die Auswahl um, statt Abhaken,
   // Datum-Schnellwahl oder Detailansicht auszulösen.
   if (state.selecting) {
@@ -479,13 +484,14 @@ function taskRow(t, { handle = false, plan = null } = {}) {
   }
   // Einzeilig wie Asanas Listenansicht: Häkchen, Titel, rechts Checklisten-Stand, Datum, Zuständigkeit.
   return h('div', { class: 'task' + (handle ? ' manual' : '') + (t.done ? ' done' : ''), 'data-id': t.id },
-    handle && h('button', { type: 'button', class: 'row-drag', title: 'Ziehen zum Sortieren' }, '⠿'),
+    handle && h('button', { type: 'button', class: 'row-drag', title: shop ? 'Ziehen: sortieren oder in eine andere Kategorie – Tippen: Kategorie wählen' : 'Ziehen zum Sortieren' }, '⠿'),
     plan === 'catalog'
       ? h('button', { type: 'button', class: 'plan-add', title: 'Auf den Plan „Diese Woche“ setzen', onclick: (e) => { e.stopPropagation(); setPlanned(t, true); } }, '＋')
       : h('input', { type: 'checkbox', checked: t.done, title: plan === 'week' ? 'Gekocht – zurück in den Katalog' : t.done ? 'Wieder öffnen' : 'Abhaken', onchange: (e) => toggleDone(t, e.target.checked) }),
     h('div', { class: 'main', onclick: () => openForm(t) },
       h('div', { class: 'title' }, t.title)),
     h('div', { class: 'right' },
+      shop === 'unassigned' && h('button', { type: 'button', class: 'badge cat-pick', title: 'Einkaufskategorie wählen', onclick: (e) => { e.stopPropagation(); openCategoryMenu(t, e.currentTarget); } }, 'Kategorie …'),
       t.checklist.length > 0 && checklistBadge(t), listMoveBadge(t), dateChip(t), avatar(t.assignee) || h('span', { class: 'avatar-slot' })),
     // Die aufgeklappte Checkliste bekommt eine eigene Rasterzeile darunter: so bleiben Häkchen, Titel und der
     // Auf-/Zuklapp-Knopf oben in der Zeile stehen, statt beim Aufklappen mit der Zeilenhöhe in die Mitte zu wandern.
@@ -928,8 +934,107 @@ async function commitPlanOrder(container, movedId) {
   } catch (e) { toast(e.message); reload(); }
 }
 
+// --- Einkaufsliste nach Kategorien (Wörterbuch in shop-categories.js) ---
+// EIN Raster mit Überschriften je belegter Kategorie (feste Supermarkt-Reihenfolge), ganz oben „Nicht zugeordnet“. Zeilen lassen sich
+// innerhalb eines Abschnitts sortieren und über die Überschriften hinweg ziehen (= Kategorie ändern, merkt sich die App für den
+// nächsten Eintrag mit gleichem Namen); ein Tipp auf den Griff öffnet ein Menü mit allen Kategorien (z. B. für leere Kategorien).
+function shopPage(list) {
+  const SC = ShopCategories;
+  const mine = state.tasks.filter((t) => listOf(t) === list.id);
+  const learned = SC.buildLearned(mine);
+  const visible = mine.filter((t) => state.showDone || !t.done).sort(manualCmp);
+  const groups = new Map([[null, []], ...SC.CATEGORIES.map((c) => [c.id, []])]);
+  for (const t of visible) groups.get(SC.categoryOf(t, learned) ?? null).push(t);
+  const canDrag = !state.selecting;
+  const el = h('div', { class: 'list plan shop' });
+  for (const [id, items] of groups) {
+    if (!items.length) continue;
+    const open = items.filter((t) => !t.done).length;
+    el.append(h('div', { class: 'plan-head' + (id === null ? ' unassigned' : ''), 'data-cat': id ?? '' },
+      h('strong', {}, `${SC.labelOf(id)} (${open})`),
+      id === null && h('span', { class: 'plan-hint' }, 'Kategorie wählen oder Zeile in eine Kategorie ziehen')));
+    for (const t of items) el.append(taskRow(t, { handle: canDrag && !t.done, shop: id === null ? 'unassigned' : 'assigned' }));
+  }
+  if (!visible.length) el.append(h('div', { class: 'plan-empty' }, `„${list.name}“ ist leer. Tipp oben etwas ein!`));
+  if (canDrag) {
+    for (const row of el.querySelectorAll('.task.manual')) {
+      attachSort({ item: row, handle: row.querySelector('.row-drag'), container: el, itemSel: '.task.manual, .plan-head', axis: 'y', mode: 'now',
+        onDone: ({ moved } = {}) => {
+          if (!moved) { const t = state.tasks.find((x) => x.id === row.dataset.id); if (t) { render(); openCategoryMenuForId(t.id); } return; }
+          commitShopOrder(el, row.dataset.id, learned);
+        } });
+    }
+  }
+  return h('div', {},
+    h('div', { class: 'section' },
+      h('div', { class: 'section-header static' }, h('strong', {}, `${list.name} (${mine.filter((t) => !t.done).length})`)),
+      h('div', { class: 'toolbar' },
+        h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) }, state.selecting ? 'Auswahl beenden' : '☑ Auswählen'),
+        h('span', { style: 'flex:1' }), doneToggle()),
+      el),
+    state.selecting && selectBar(visible.map((t) => t.id)));
+}
+
+// Nach dem Ziehen: die Überschrift, unter der die Zeile jetzt steht, ist die neue Kategorie; die Reihenfolge im Abschnitt wird `order`.
+async function commitShopOrder(container, movedId, learned) {
+  const SC = ShopCategories;
+  const kids = [...container.children];
+  const firstHead = kids.find((k) => k.classList.contains('plan-head'));
+  let section = firstHead ? firstHead.dataset.cat : '';
+  const seqs = new Map();
+  for (const k of kids) {
+    if (k.classList.contains('plan-head')) { section = k.dataset.cat; continue; }
+    if (k.classList.contains('manual')) { if (!seqs.has(section)) seqs.set(section, []); seqs.get(section).push(k.dataset.id); }
+  }
+  const movedSection = [...seqs].find(([, ids]) => ids.includes(movedId))?.[0] ?? '';
+  const moved = state.tasks.find((t) => t.id === movedId);
+  if (!moved) { render(); return; }
+  const seq = (seqs.get(movedSection) || []).map((id) => state.tasks.find((t) => t.id === id)).filter(Boolean);
+  const patches = new Map(OfflineLogic.computeOrderUpdates(seq, movedId).map((u) => [u.id, { order: u.order }]));
+  const before = SC.categoryOf(moved, learned) ?? '';
+  if (before !== movedSection) patches.set(movedId, { ...(patches.get(movedId) || {}), shop_cat: movedSection || null });
+  if (!patches.size) { render(); return; }
+  try {
+    for (const [id, patch] of patches) await Offline.mutate('task', 'update', { id, patch });
+    await reload();
+    kickSync();
+  } catch (e) { toast(e.message); reload(); }
+}
+
+// Menü zum Wählen der Einkaufskategorie (gleiche Bauweise wie das Datums-Menü).
+function openCategoryMenuForId(id) {
+  const t = state.tasks.find((x) => x.id === id);
+  const anchor = document.querySelector(`.task[data-id="${CSS.escape(id)}"] .row-drag`) || document.querySelector(`.task[data-id="${CSS.escape(id)}"]`);
+  if (t && anchor) openCategoryMenu(t, anchor);
+}
+function openCategoryMenu(t, anchor) {
+  closeDateMenu();
+  const SC = ShopCategories;
+  const learned = SC.buildLearned(state.tasks.filter((x) => shoppingList() && listOf(x) === shoppingList().id));
+  const current = SC.categoryOf(t, learned);
+  const choose = (cat) => async () => {
+    try {
+      await Offline.mutate('task', 'update', { id: t.id, patch: { shop_cat: cat, order: null } });
+      await reload();
+      kickSync();
+    } catch (e) { toast(e.message); reload(); }
+  };
+  const item = (label, cat, on) => h('button', { type: 'button', onclick: (e) => { e.stopPropagation(); closeDateMenu(); choose(cat)(); } }, (on ? '✓ ' : '') + label);
+  const menu = h('div', { class: 'date-menu cat-menu', onclick: (e) => e.stopPropagation() },
+    ...SC.CATEGORIES.map((c) => item(c.label, c.id, c.id === current)),
+    t.shop_cat && item('Automatisch erkennen', null, false));
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth, hgt = menu.offsetHeight;
+  menu.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+  menu.style.top = Math.max(8, Math.min(r.bottom + 4, innerHeight - hgt - 8)) + 'px';
+  // Etwas später scharf schalten: das „Klick“-Ereignis, das auf das Antippen des Griffs folgt, soll das Menü nicht sofort wieder schließen.
+  setTimeout(() => document.addEventListener('click', closeDateMenu, { once: true }), 120);
+}
+
 function homePage() {
   const list = currentList();
+  if (shoppingList()?.id === list.id) return shopPage(list);
   if (OfflineLogic.isPlanList(list)) return planPage(list);
   const inbox = list.id === INBOX_LIST;
   const main = list.id === MAIN_LIST;
@@ -1072,7 +1177,7 @@ function attachSort({ item, handle = item, container, itemSel, axis = 'y', mode 
     stop();
     item.classList.remove('dragging');
     item.style.transform = '';
-    if (wasActive) { item.dataset.justDragged = '1'; setTimeout(() => delete item.dataset.justDragged, 0); onDone?.(); }
+    if (wasActive) { item.dataset.justDragged = '1'; setTimeout(() => delete item.dataset.justDragged, 0); onDone?.({ moved: Math.abs(lastPos - startPos) > 5 }); }
   }
   handle.addEventListener('pointerdown', (e) => {
     if (e.button > 0 || active) return;
@@ -1382,6 +1487,18 @@ function openForm(task) {
   // Status = in welchem Bereich der Startseite der Task liegt (früher nur per Schnellknopf in der Zeile änderbar).
   const listSel = h('select', {}, state.lists.map((l) => h('option', { value: l.id, selected: l.id === placeOf(t) }, l.name)));
   const planBox = h('input', { type: 'checkbox', id: 'optPlanned', checked: !!t.planned });
+  // Einkaufskategorie (nur in der Einkaufsliste): „Automatisch“ zeigt, was das Wörterbuch für den Titel erkennt.
+  const shopLearned = ShopCategories.buildLearned(state.tasks.filter((x) => shoppingList() && listOf(x) === shoppingList().id));
+  const shopSel = h('select', {});
+  const paintShopSel = () => {
+    const guess = ShopCategories.categorize(title.value, shopLearned);
+    shopSel.replaceChildren(
+      h('option', { value: '' }, guess ? `Automatisch (erkannt: ${ShopCategories.labelOf(guess)})` : 'Automatisch (nicht erkannt)'),
+      ...ShopCategories.CATEGORIES.map((c) => h('option', { value: c.id }, c.label)));
+    shopSel.value = t.shop_cat || '';
+  };
+  paintShopSel();
+  title.addEventListener('change', paintShopSel);
   const who = makeAssigneePicker(t.assignee);
   const notes = h('textarea', { rows: 3 }, t.notes || '');
   notes.value = t.notes || '';
@@ -1425,6 +1542,7 @@ function openForm(task) {
       due_end_time: date.value && time.value && endTime.value ? endTime.value : null,
       assignee: who.get(), priority: prio.value, list_id: listSel.value, bucket: listSel.value === INBOX_LIST ? 'inbox' : (task && placeOf(task) === INBOX_LIST ? 'todo' : (task?.bucket || 'todo')),
       planned: isPlanListId(listSel.value) ? planBox.checked : false,
+      ...(shoppingList()?.id === listSel.value ? { shop_cat: shopSel.value || null } : {}),
       in_calendar: !!date.value && inCal.checked, notes: notes.value, checklist: chk.get(), recurrence };
     // Bei einer Bearbeitung nur die tatsächlich geänderten Felder senden (siehe diffPatch); beim Neuanlegen
     // gibt es noch keine Vorversion, da geht das komplette Formular raus.
@@ -1447,7 +1565,8 @@ function openForm(task) {
   const field = (label, ...ctl) => h('div', { class: 'field' }, h('label', {}, label), ...ctl);
   const todayBtn = h('button', { type: 'button', class: 'btn small', title: 'Datum auf heute setzen', onclick: () => { date.value = todayStr(); date.dispatchEvent(new Event('change')); } }, 'Heute');
   const planField = h('label', { for: 'optPlanned', class: 'inline-check', style: 'color:var(--text)' }, planBox, h('span', {}, '🍽 Steht auf dem Plan „Diese Woche“'));
-  const syncPlan = () => { planField.hidden = !isPlanListId(listSel.value); };
+  const shopField = field('Einkaufskategorie', shopSel);
+  const syncPlan = () => { planField.hidden = !isPlanListId(listSel.value); shopField.hidden = shoppingList()?.id !== listSel.value; };
   listSel.addEventListener('change', syncPlan);
   syncPlan();
   form.onsubmit = save;
@@ -1464,6 +1583,7 @@ function openForm(task) {
     field('Zuständigkeit', who.el),
     h('div', { class: 'row2' }, field('Priorität', prio), field('Liste', listSel)),
     planField,
+    shopField,
     field('Notizen', notes),
     field('Checkliste (Enter = nächster Punkt, mehrzeiligen Text einfügen = mehrere Punkte)', chk.el),
     err,

@@ -1152,3 +1152,21 @@ test('Speiseplan: „Diese Woche“-Markierung (planned) wandert mit zu Google u
   await S.syncWith(a, remote);
   assert.strictEqual((await a.getRawTasks()).find((x) => x.id === t.id).planned, false);
 });
+
+test('Einkaufsliste: manuell gewählte Kategorie (shop_cat) wandert mit zu Google und zum zweiten Gerät; ohne Wahl bleibt sie leer', async () => {
+  const a = fakeStore();
+  const b = fakeStore();
+  await createLocal(a, { title: 'Dings vom Markt', in_calendar: false, shop_cat: 'obst', list_id: 'einkauf' });
+  await createLocal(a, { title: 'Milch', in_calendar: false, list_id: 'einkauf' });
+  await S.syncWith(a, remote);
+  assert.strictEqual(evByTitle('Dings vom Markt').extendedProperties.private.scat, 'obst');
+  assert.strictEqual(evByTitle('Milch').extendedProperties.private.scat, '');
+  await S.syncWith(b, remote);
+  const onB = await b.getRawTasks();
+  assert.strictEqual(onB.find((x) => x.title === 'Dings vom Markt').shop_cat, 'obst');
+  assert.strictEqual(onB.find((x) => x.title === 'Milch').shop_cat, null);
+  await updateLocal(b, onB.find((x) => x.title === 'Dings vom Markt').id, { shop_cat: 'haushalt' });
+  await S.syncWith(b, remote);
+  await S.syncWith(a, remote);
+  assert.strictEqual((await a.getRawTasks()).find((x) => x.title === 'Dings vom Markt').shop_cat, 'haushalt');
+});

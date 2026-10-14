@@ -58,6 +58,7 @@
       bucket: list_id !== MAIN_LIST ? 'todo' : BUCKETS.includes(input.bucket) ? input.bucket : 'todo',
       list_id,
       order: Number.isFinite(input.order) ? input.order : null, // Position bei manueller Sortierung (siehe computeOrderUpdates)
+      shop_cat: typeof input.shop_cat === 'string' && input.shop_cat ? input.shop_cat : null, // Einkaufsliste: manuell gewählte Kategorie (siehe shop-categories.js)
       planned: !!input.planned, // Speiseplan: steht auf dem Plan „Diese Woche“ (siehe isPlanList)
       // „In Google Kalender anzeigen“: aus, außer der Task hat eine Uhrzeit (ein Termin gehört in den Kalender).
       // Ohne Datum gibt es nichts anzuzeigen. Siehe sync-core.js (HIDDEN_EPOCH).
