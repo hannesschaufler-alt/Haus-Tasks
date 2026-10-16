@@ -64,3 +64,18 @@ test('Kurze Notizen bleiben im bisherigen Feld „notes“ (alte Termine lesen s
   assert.ok(back.checklist.length > 0 && back.checklist.length < 400);
   assert.deepStrictEqual(back.checklist, riesig.slice(0, back.checklist.length));
 });
+
+test('Herkunft der Zutat (Rezept-Titel): bereinigt, im Termin gespeichert, kommt zurück; alte Termine ohne Herkunft bleiben leer', () => {
+  assert.deepStrictEqual(L.cleanSources(['Pizza', ' pizza ', '', 5, 'Curry', 'x'.repeat(200)]).map((s) => s.length), [5, 5, 80]);
+  assert.strictEqual(L.cleanSources(Array.from({ length: 20 }, (_, i) => `R${i}`)).length, 8);
+  const t = L.createTask([], { title: 'Zwiebeln', list_id: 'einkauf', sources: ['Pizza', 'Curry'] }, {}).task;
+  assert.deepStrictEqual(t.sources, ['Pizza', 'Curry']);
+  assert.deepStrictEqual(L.createTask([], { title: 'Salz' }, {}).task.sources, []);
+  const body = S.eventBody({ ...t, priority: 'mittel', color: '9' });
+  assert.strictEqual(body.extendedProperties.private.src, '["Pizza","Curry"]');
+  assert.deepStrictEqual(S.taskShapeFromEvent(body).sources, ['Pizza', 'Curry']);
+  assert.deepStrictEqual(S.taskShapeFromEvent({ summary: 'Alt', start: { date: '2031-01-01' }, extendedProperties: { private: { priority: 'mittel' } } }).sources, []);
+  assert.deepStrictEqual(S.taskShapeFromEvent({ summary: 'Kaputt', start: { date: '2031-01-01' }, extendedProperties: { private: { priority: 'mittel', src: '{kaputt' } } }).sources, []);
+  const lang = S.eventBody({ ...t, sources: Array.from({ length: 8 }, (_, i) => `Rezept mit einem sehr langen Namen Nummer ${i} `.repeat(2).slice(0, 80)), priority: 'mittel', color: '9' });
+  assert.ok(lang.extendedProperties.private.src.length <= 900);
+});

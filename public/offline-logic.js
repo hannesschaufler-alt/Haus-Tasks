@@ -72,6 +72,16 @@
   const findTask = (tasks, id) => tasks.find((t) => t.id === id);
 
   // `listColors` (Listen-ID → Farbe) gibt neuen Tasks die Farbe ihrer Liste; ohne Angabe bleibt es bei Vorgabe/Kategorie.
+  // Rezept-Titel, aus denen ein Einkaufs-Eintrag stammt: höchstens 8, je höchstens 80 Zeichen, ohne Doppelte.
+  function cleanSources(list) {
+    const out = [];
+    for (const s of Array.isArray(list) ? list : []) {
+      const t = typeof s === 'string' ? s.trim().slice(0, 80) : '';
+      if (t && !out.some((o) => o.toLowerCase() === t.toLowerCase())) out.push(t);
+    }
+    return out.slice(0, 8);
+  }
+
   function createTask(tasks, input, categories, listColors = {}) {
     const title = String(input.title ?? '').trim();
     if (!title) throw new Error('Titel fehlt');
@@ -92,6 +102,7 @@
       bucket: list_id !== MAIN_LIST ? 'todo' : BUCKETS.includes(input.bucket) ? input.bucket : 'todo',
       list_id,
       order: Number.isFinite(input.order) ? input.order : null, // Position bei manueller Sortierung (siehe computeOrderUpdates)
+      sources: cleanSources(input.sources), // Einkaufsliste: aus welchen Rezepten die Zutat stammt (Titel)
       shop_cat: typeof input.shop_cat === 'string' && input.shop_cat ? input.shop_cat : null, // Einkaufsliste: manuell gewählte Kategorie (siehe shop-categories.js)
       planned: !!input.planned, // Speiseplan: steht auf dem Plan „Diese Woche“ (siehe isPlanList)
       // „In Google Kalender anzeigen“: aus, außer der Task hat eine Uhrzeit (ein Termin gehört in den Kalender).
@@ -234,18 +245,19 @@
   // (Groß-/Kleinschreibung egal). `existing`: die Tasks der Einkaufsliste.
   function shoppingItems(checklist, existing) {
     const norm = (t) => String(t ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-    const have = new Set(existing.filter((t) => !t.done && !t.deleted).map((t) => norm(t.title)));
+    const have = new Map(existing.filter((t) => !t.done && !t.deleted).map((t) => [norm(t.title), t]));
     const seen = new Set();
     const add = [];
+    const matched = []; // die schon offenen Einträge, die zu einer Zutat passen (bekommen das Rezept als weitere Herkunft)
     let unique = 0;
     for (const item of checklist || []) {
       const key = norm(item.text);
       if (!key || seen.has(key)) continue;
       seen.add(key);
       unique++;
-      if (!have.has(key)) add.push(String(item.text).trim());
+      if (have.has(key)) matched.push(have.get(key)); else add.push(String(item.text).trim());
     }
-    return { add, already: unique - add.length };
+    return { add, already: unique - add.length, matched };
   }
 
   // Manuelle Reihenfolge: jeder Task kann eine Position (`order`, aufsteigend) haben. Tasks ohne Position (neu) stehen oben.
@@ -324,6 +336,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, isPlanList, parseRecipes, normalizePlacement, shoppingItems, computeOrderUpdates,
+    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, cleanSources, isPlanList, parseRecipes, normalizePlacement, shoppingItems, computeOrderUpdates,
   };
 });

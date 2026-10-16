@@ -175,6 +175,11 @@
   .plan-head.unassigned { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--card)); border-left: 3px solid var(--accent); }
   .plan-hint { text-transform: none; letter-spacing: normal; font-size: 12px; color: var(--muted); }
   .badge.cat-pick { border: 1px dashed var(--accent); background: none; color: var(--accent); cursor: pointer; font: inherit; font-size: 11.5px; padding: 1px 8px; }
+  .badge.src-badge { border: none; background: var(--chip); color: inherit; cursor: pointer; font: inherit; font-size: 11.5px; padding: 1px 7px; gap: 3px; }
+  .badge.src-badge:hover { outline: 1px solid var(--accent); }
+  .src-menu { max-width: min(320px, calc(100vw - 16px)); }
+  .src-head { padding: 6px 12px 2px; font-size: 12px; color: var(--muted); }
+  .src-menu button:disabled { opacity: .55; cursor: default; }
   .cat-menu { max-height: calc(100dvh - 24px); overflow-y: auto; }
   .plan-empty { padding: 12px; color: var(--muted); font-size: 13px; font-style: italic; border-bottom: 1px solid var(--line); }
   .plan-add { width: 22px; height: 22px; min-width: 22px; border-radius: 50%; border: 2px dashed var(--ring); background: none; color: var(--ring); font-size: 14px; line-height: 1;
@@ -491,6 +496,7 @@ function taskRow(t, { handle = false, plan = null, shop = null } = {}) {
     h('div', { class: 'main', onclick: () => openForm(t) },
       h('div', { class: 'title' }, t.title)),
     h('div', { class: 'right' },
+      (t.sources || []).length > 0 && sourceBadge(t),
       shop === 'unassigned' && h('button', { type: 'button', class: 'badge cat-pick', title: 'Einkaufskategorie wählen', onclick: (e) => { e.stopPropagation(); openCategoryMenu(t, e.currentTarget); } }, 'Kategorie …'),
       t.checklist.length > 0 && checklistBadge(t), listMoveBadge(t), dateChip(t), avatar(t.assignee) || h('span', { class: 'avatar-slot' })),
     // Die aufgeklappte Checkliste bekommt eine eigene Rasterzeile darunter: so bleiben Häkchen, Titel und der
@@ -519,7 +525,32 @@ function checklistView(t) {
   return h('ul', { class: 'chk-list', onclick: (e) => e.stopPropagation() },
     t.checklist.map((item, i) => h('li', { class: item.done ? 'done' : '' },
       h('label', {}, h('input', { type: 'checkbox', checked: item.done, onchange: (e) => toggleItem(t, i, e.target.checked) }), h('span', {}, item.text)))),
-    canSendToShopping(t) && h('li', { class: 'chk-send' }, sendToShoppingButton(() => t.checklist)));
+    canSendToShopping(t) && h('li', { class: 'chk-send' }, sendToShoppingButton(() => t.checklist, () => t.title)));
+}
+
+// --- Herkunft einer Zutat (aus welchen Rezepten) ---
+// Kleines Symbol in der Zeile der Einkaufsliste: Maus darüber zeigt die Rezept-Titel (Tooltip); Antippen/Klicken öffnet ein kleines
+// Menü mit den Rezepten (auch am Handy), ein Tipp auf einen Titel öffnet das Rezept.
+function sourceBadge(t) {
+  const n = t.sources.length;
+  return h('button', { type: 'button', class: 'badge src-badge', title: 'Zutat für: ' + t.sources.join(', '), onclick: (e) => { e.stopPropagation(); openSourceMenu(t, e.currentTarget); } },
+    '🍽', n > 1 && h('span', {}, String(n)));
+}
+function openSourceMenu(t, anchor) {
+  closeDateMenu();
+  const recipeFor = (title) => state.tasks.find((x) => x.id !== t.id && x.title.trim().toLowerCase() === title.trim().toLowerCase() && listOf(x) !== shoppingList()?.id);
+  const menu = h('div', { class: 'date-menu src-menu', onclick: (e) => e.stopPropagation() },
+    h('div', { class: 'src-head' }, 'Zutat für:'),
+    ...t.sources.map((title) => {
+      const recipe = recipeFor(title);
+      return h('button', { type: 'button', disabled: !recipe, title: recipe ? 'Rezept öffnen' : 'Dieses Rezept gibt es nicht mehr', onclick: () => { closeDateMenu(); openForm(recipe); } }, title);
+    }));
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth, hgt = menu.offsetHeight;
+  menu.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + 'px';
+  menu.style.top = (r.bottom + hgt + 8 > innerHeight ? Math.max(8, r.top - hgt - 4) : r.bottom + 4) + 'px';
+  setTimeout(() => document.addEventListener('click', closeDateMenu, { once: true }), 120);
 }
 
 // --- Einkaufsliste ---
@@ -529,25 +560,29 @@ function checklistView(t) {
 const isPlanListId = (id) => OfflineLogic.isPlanList(state.lists.find((l) => l.id === id));
 const shoppingList = () => state.lists.find((l) => l.shopping) || state.lists.find((l) => /einkauf/i.test(l.name)) || null;
 const canSendToShopping = (t) => { const shop = shoppingList(); return !!shop && listOf(t) !== shop.id; };
-function sendToShoppingButton(getItems) {
-  return h('button', { type: 'button', class: 'btn small', title: 'Alle Punkte als Tasks auf die Einkaufsliste setzen', onclick: (e) => { e.stopPropagation(); sendToShopping(getItems()); } },
+function sendToShoppingButton(getItems, getTitle) {
+  return h('button', { type: 'button', class: 'btn small', title: 'Alle Punkte als Tasks auf die Einkaufsliste setzen', onclick: (e) => { e.stopPropagation(); sendToShopping(getItems(), getTitle?.()); } },
     '🛒 An Einkaufsliste senden');
 }
-async function sendToShopping(items) {
+async function sendToShopping(items, recipeTitle) {
   const shop = shoppingList();
   if (!shop) { toast('Keine Einkaufsliste gefunden: Lege eine Liste „Einkaufsliste“ an oder markiere eine Liste über ✎ als Einkaufsliste.'); return; }
-  const { add, already } = OfflineLogic.shoppingItems(items, state.tasks.filter((t) => listOf(t) === shop.id));
-  if (!add.length) { toast(already ? 'Alles steht schon auf der Einkaufsliste.' : 'Die Checkliste ist leer.'); return; }
+  const { add, already, matched } = OfflineLogic.shoppingItems(items, state.tasks.filter((t) => listOf(t) === shop.id));
+  const source = (recipeTitle || '').trim();
+  // Steht eine Zutat schon (offen) auf der Liste, bekommt der Eintrag dieses Rezept als weitere Herkunft.
+  const toTag = source ? matched.filter((t) => !(t.sources || []).some((s) => s.toLowerCase() === source.toLowerCase())) : [];
+  if (!add.length && !toTag.length) { toast(already ? 'Alles steht schon auf der Einkaufsliste.' : 'Die Checkliste ist leer.'); return; }
   try {
+    for (const t of toTag) await Offline.mutate('task', 'update', { id: t.id, patch: { sources: [...(t.sources || []), source] } });
     // Neue Tasks stehen oben: der erste Punkt der Checkliste bekommt den jüngsten Zeitstempel und steht damit ganz oben
     // (rückwärts angelegt, damit das auch auf den anderen Geräten so ankommt).
     const base = Date.now();
     for (let i = add.length - 1; i >= 0; i--) {
-      await Offline.mutate('task', 'create', { input: { title: add[i], list_id: shop.id, bucket: 'todo', created_at: new Date(base - i).toISOString() } });
+      await Offline.mutate('task', 'create', { input: { title: add[i], list_id: shop.id, bucket: 'todo', sources: source ? [source] : [], created_at: new Date(base - i).toISOString() } });
     }
     await reload();
     kickSync();
-    toast(`${add.length} Punkt${add.length === 1 ? '' : 'e'} auf „${shop.name}“ gesetzt${already ? `, ${already} standen schon drauf` : ''}.`);
+    toast(`${add.length} Punkt${add.length === 1 ? '' : 'e'} auf „${shop.name}“ gesetzt${already ? `, ${already} standen schon drauf${toTag.length ? ' (Rezept ergänzt)' : ''}` : ''}.`);
   } catch (e) { toast(e.message); reload(); }
 }
 
@@ -1574,7 +1609,7 @@ function makeChecklistEditor(initial, { onSend } = {}) {
   const el = h('div', {}, rows,
     h('div', { class: 'chk-actions' },
       h('button', { type: 'button', class: 'btn small chk-add', onclick: () => addRow('', false, { focus: true }) }, '＋ Punkt hinzufügen'),
-      onSend && sendToShoppingButton(() => get())));
+      onSend && sendToShoppingButton(() => get(), onSend)));
   return { el, get };
 }
 
@@ -1623,7 +1658,7 @@ function openForm(task) {
   const who = makeAssigneePicker(t.assignee);
   const notes = h('textarea', { rows: 3 }, t.notes || '');
   notes.value = t.notes || '';
-  const chk = makeChecklistEditor(t.checklist || [], { onSend: task && canSendToShopping(t) ? true : null });
+  const chk = makeChecklistEditor(t.checklist || [], { onSend: task && canSendToShopping(t) ? () => title.value : null });
 
 
   // Serie
@@ -1687,6 +1722,7 @@ function openForm(task) {
   const todayBtn = h('button', { type: 'button', class: 'btn small', title: 'Datum auf heute setzen', onclick: () => { date.value = todayStr(); date.dispatchEvent(new Event('change')); } }, 'Heute');
   const planField = h('label', { for: 'optPlanned', class: 'inline-check', style: 'color:var(--text)' }, planBox, h('span', {}, '🍽 Steht auf dem Plan „Diese Woche“'));
   const shopField = field('Einkaufskategorie', shopSel);
+  const sourceHint = (t.sources || []).length ? h('div', { class: 'hint' }, '🍽 Zutat für: ' + t.sources.join(', ')) : null;
   const syncPlan = () => { planField.hidden = !isPlanListId(listSel.value); shopField.hidden = shoppingList()?.id !== listSel.value; };
   listSel.addEventListener('change', syncPlan);
   syncPlan();
@@ -1705,6 +1741,7 @@ function openForm(task) {
     h('div', { class: 'row2' }, field('Priorität', prio), field('Liste', listSel)),
     planField,
     shopField,
+    sourceHint,
     field('Notizen', notes),
     field('Checkliste (Enter = nächster Punkt, mehrzeiligen Text einfügen = mehrere Punkte)', chk.el),
     err,

@@ -261,7 +261,8 @@ test('Einkaufsliste: Zutaten ohne Doppelte und ohne das, was dort schon offen st
   const r = L.shoppingItems([{ text: ' käse ' }, { text: 'Mehl' }, { text: 'Gelöscht' }, { text: 'Tomaten', done: true }, { text: 'tomaten' }, { text: '  ' }], existing);
   assert.deepStrictEqual(r.add, ['Mehl', 'Gelöscht', 'Tomaten']); // erledigtes/gelöschtes zählt nicht als „steht schon drauf“
   assert.strictEqual(r.already, 1);
-  assert.deepStrictEqual(L.shoppingItems([], []), { add: [], already: 0 });
+  assert.deepStrictEqual(r.matched.map((t) => t.title), ['Käse'], 'der schon offene Eintrag wird mitgeliefert (bekommt das Rezept als Herkunft)');
+  assert.deepStrictEqual(L.shoppingItems([], []), { add: [], already: 0, matched: [] });
 });
 
 test('Ausdrücklicher Anlegezeitpunkt wird übernommen, ein ungültiger ignoriert', () => {
