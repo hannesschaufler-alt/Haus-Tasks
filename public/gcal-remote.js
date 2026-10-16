@@ -66,17 +66,27 @@
 
       // Kategorien/Orte liegen als versteckter, ganztägiger Termin auf dem 1.1.1970 (fällt in der Praxis
       // niemandem auf); privateExtendedProperty filtert serverseitig, ohne den ganzen Kalender laden zu müssen.
-      async readConfig() {
-        const qs = new URLSearchParams({ privateExtendedProperty: `appMarker=${CONFIG_MARKER}`, maxResults: '1', showDeleted: 'false' });
+      // Alle Konfigurations-Termine (normal genau einer; zwei Geräte, die gleichzeitig zum ersten Mal synchronisieren, können
+      // aber je einen anlegen). Ein nicht lesbarer Termin wird als `invalid` markiert statt stillschweigend als „leere
+      // Einstellungen“ zu gelten – sonst würden die Listen auf dem Gerät durch eine leere Konfiguration ersetzt.
+      async readConfigs() {
+        const qs = new URLSearchParams({ privateExtendedProperty: `appMarker=${CONFIG_MARKER}`, maxResults: '20', showDeleted: 'false' });
         const data = await call(`/events?${qs}`);
-        const ev = data.items?.[0];
-        if (!ev) return null;
-        const p = ev.extendedProperties?.private || {};
-        try {
-          return { id: ev.id, updated: ev.updated, categories: JSON.parse(p.categories || '{}'), locations: JSON.parse(p.locations || '[]'), settings: JSON.parse(p.settings || '{}') };
-        } catch {
-          return { id: ev.id, updated: ev.updated, categories: {}, locations: [], settings: {} };
-        }
+        return (data.items || []).map((ev) => {
+          const p = ev.extendedProperties?.private || {};
+          try {
+            return { id: ev.id, updated: ev.updated, categories: JSON.parse(p.categories || '{}'), locations: JSON.parse(p.locations || '[]'), settings: JSON.parse(p.settings || '{}') };
+          } catch {
+            return { id: ev.id, updated: ev.updated, invalid: true, categories: {}, locations: [], settings: {} };
+          }
+        });
+      },
+      // Maßgeblich ist der zuletzt geschriebene lesbare Termin (bei mehreren: der neueste, nicht ein beliebiger).
+      async readConfig() {
+        const all = await this.readConfigs();
+        if (!all.length) return null;
+        const byNewest = (a, b) => String(b.updated || '').localeCompare(String(a.updated || ''));
+        return [...all].filter((c) => !c.invalid).sort(byNewest)[0] || [...all].sort(byNewest)[0];
       },
       async writeConfig(id, cfg) {
         const body = {

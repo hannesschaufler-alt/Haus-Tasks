@@ -578,6 +578,10 @@
       return;
     }
     if (!remoteCfg) return;
+    if (remoteCfg.invalid) { // nicht lesbar: nicht als „keine Einstellungen“ übernehmen, sondern mit dem lokalen Stand reparieren
+      if (local) await remote.writeConfig(remoteCfg.id, local);
+      return;
+    }
     const localNewer = local?.updated_at && remoteCfg.updated && local.updated_at > remoteCfg.updated;
     if (localNewer) {
       await remote.writeConfig(remoteCfg.id, local);

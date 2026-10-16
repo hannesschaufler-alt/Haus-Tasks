@@ -301,5 +301,6 @@
     // Nur für die Debug-Ansicht (#/debug): roher Stand ohne die Aufräum-/Filterlogik von getCachedTasks().
     getRawTasks,
     getOutbox,
+    getConfigEvents: () => remote.readConfigs(),
   };
 })(typeof window !== 'undefined' ? window : this);

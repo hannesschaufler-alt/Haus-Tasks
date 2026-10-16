@@ -121,3 +121,14 @@ test('Ohne eingerichtete Kalender-ID wird ein klarer Fehler geworfen, kein Netzw
   await assert.rejects(r.get('x'), /Kalender/);
   assert.strictEqual(calls.length, 0);
 });
+
+test('readConfig: bei mehreren Konfigurations-Terminen gilt der zuletzt geänderte lesbare, ein nicht lesbarer wird nie als „leere Einstellungen“ übernommen', async () => {
+  const mk = (id, updated, lists) => ({ id, updated, extendedProperties: { private: { categories: '{}', locations: '[]', settings: lists === null ? '{kaputt' : JSON.stringify({ lists }) } } });
+  const calls = fakeFetch([{ body: { items: [mk('alt', '2026-10-10T10:00:00.000Z', [{ id: 'a', name: 'Alt' }]), mk('neu', '2026-10-15T10:00:00.000Z', [{ id: 'b', name: 'Neu' }]), mk('kaputt', '2026-10-16T10:00:00.000Z', null)] } }]);
+  const cfg = await remote(calls).readConfig();
+  assert.strictEqual(cfg.id, 'neu', 'der jüngste LESBARE Termin');
+  assert.strictEqual(cfg.settings.lists[0].name, 'Neu');
+  const nurKaputt = await remote(fakeFetch([{ body: { items: [mk('kaputt', 't', null)] } }])).readConfig();
+  assert.strictEqual(nurKaputt.invalid, true);
+  assert.match(calls[0].url, /maxResults=20/);
+});

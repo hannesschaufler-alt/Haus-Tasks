@@ -1170,3 +1170,17 @@ test('Einkaufsliste: manuell gewählte Kategorie (shop_cat) wandert mit zu Googl
   await S.syncWith(a, remote);
   assert.strictEqual((await a.getRawTasks()).find((x) => x.title === 'Dings vom Markt').shop_cat, 'haushalt');
 });
+
+test('Nicht lesbare Konfiguration in Google ersetzt nie die lokalen Listen – sie wird stattdessen mit dem lokalen Stand repariert', async () => {
+  const store = fakeStore({ lists: [{ id: 'tasks', name: 'Geplant', color: '9' }, { id: 'essen', name: 'Essen', color: '10' }] });
+  await S.syncWith(store, remote);
+  const realRead = remote.readConfig.bind(remote);
+  let written = null;
+  remote.readConfig = async () => ({ id: 'cfg-kaputt', updated: '2999-01-01T00:00:00.000Z', invalid: true, categories: {}, locations: [], settings: {} });
+  const realWrite = remote.writeConfig.bind(remote);
+  remote.writeConfig = async (id, cfg) => { written = { id, cfg }; return realWrite(id, cfg); };
+  await S.syncWith(store, remote);
+  assert.strictEqual(written.id, 'cfg-kaputt', 'der kaputte Termin wird überschrieben');
+  assert.ok((await store.getConfig()).settings.lists.some((l) => l.id === 'essen'), 'lokale Listen bleiben erhalten');
+  remote.readConfig = realRead;
+});
