@@ -906,9 +906,60 @@ function planPage(list) {
     h('div', { class: 'section' },
       h('div', { class: 'section-header static' }, h('strong', {}, `${list.name}`)),
       h('div', { class: 'toolbar' },
-        h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) }, state.selecting ? 'Auswahl beenden' : '☑ Auswählen')),
+        h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) }, state.selecting ? 'Auswahl beenden' : '☑ Auswählen'),
+        h('span', { style: 'flex:1' }),
+        h('button', { class: 'btn small', title: 'Rezepte aus einem Text einfügen', onclick: () => openRecipeImport(list) }, '📥 Rezepte importieren')),
       el),
     state.selecting && selectBar(mine.map((t) => t.id)));
+}
+
+// Rezepte importieren: Text einfügen (Format siehe OfflineLogic.parseRecipes) – jedes Rezept wird ein Eintrag im Katalog der Liste:
+// Titel = Name, Notiz = Anleitung, Checkliste = Zutaten. Gibt es den Namen schon, wird das Rezept übersprungen.
+function openRecipeImport(list) {
+  const area = h('textarea', { rows: 12, placeholder: '## Name des Gerichts\n35 Minuten · 4 Portionen\nZutaten:\n- 2 Gurken\n- 200 g Reis\nAnleitung:\n1. Reis kochen …', style: 'font-family:inherit' });
+  const preview = h('div', { class: 'hint' }, 'Füge hier die vorbereiteten Rezepte ein.');
+  const err = h('div', { class: 'error' });
+  const form = $('#form');
+  let parsed = [];
+  const update = () => {
+    parsed = OfflineLogic.parseRecipes(area.value);
+    preview.textContent = parsed.length
+      ? `${parsed.length} Rezept${parsed.length === 1 ? '' : 'e'} erkannt: ` + parsed.map((r) => `${r.title} (${r.checklist.length} Zutaten)`).join(' · ')
+      : (area.value.trim() ? 'Kein Rezept erkannt – jedes beginnt mit einer Zeile „## Name“.' : 'Füge hier die vorbereiteten Rezepte ein.');
+  };
+  area.addEventListener('input', update);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    update();
+    if (!parsed.length) { err.textContent = 'Kein Rezept erkannt.'; return; }
+    const have = new Set(state.tasks.filter((t) => listOf(t) === list.id).map((t) => t.title.trim().toLowerCase()));
+    const fresh = parsed.filter((r) => !have.has(r.title.trim().toLowerCase()));
+    try {
+      // Rückwärts mit absteigenden Zeitstempeln anlegen, dann stehen sie im Katalog in der eingefügten Reihenfolge.
+      const base = Date.now();
+      for (let i = fresh.length - 1; i >= 0; i--) {
+        const r = fresh[i];
+        await Offline.mutate('task', 'create', { input: { title: r.title, list_id: list.id, bucket: 'todo', notes: r.notes, checklist: r.checklist, created_at: new Date(base - i).toISOString() } });
+      }
+      $('#dlg').close();
+      await reload();
+      kickSync();
+      const skipped = parsed.length - fresh.length;
+      toast(`${fresh.length} Rezept${fresh.length === 1 ? '' : 'e'} importiert${skipped ? `, ${skipped} gab es schon` : ''}.`);
+    } catch (ex) { err.textContent = ex.message; }
+  };
+  form.replaceChildren(
+    h('h3', {}, `Rezepte in „${list.name}“ importieren`),
+    h('div', { class: 'hint' }, 'Jedes Rezept beginnt mit „## Name“, danach „Zutaten:“ (eine Zutat pro Zeile mit „- “) und „Anleitung:“. Zeilen zwischen Name und „Zutaten:“ (z. B. Dauer, Portionen) kommen oben in die Notiz.'),
+    h('div', { class: 'field' }, area),
+    preview, err,
+    h('div', { class: 'actions' },
+      h('span'),
+      h('div', { class: 'right' },
+        h('button', { type: 'button', class: 'btn', onclick: () => $('#dlg').close() }, 'Abbrechen'),
+        h('button', { type: 'submit', class: 'btn primary' }, 'Importieren'))));
+  $('#dlg').showModal();
+  area.focus();
 }
 
 // Nach dem Ziehen: Abschnitt (vor oder nach der „Katalog“-Überschrift) bestimmt `planned`, die Reihenfolge innerhalb des Abschnitts `order`.

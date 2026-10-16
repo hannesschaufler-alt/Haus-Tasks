@@ -195,8 +195,8 @@
           location: t.location || '',
           assignee: t.assignee || '',
           priority: t.priority || 'mittel',
-          notes: t.notes || '',
-          checklist: JSON.stringify(t.checklist || []),
+          ...packChunks('notes', String(t.notes || '').slice(0, CHUNK * NOTES_CHUNKS), NOTES_CHUNKS),
+          ...packChunks('checklist', checklistJson(t.checklist), CHECKLIST_CHUNKS),
           recurrence: t.recurrence ? JSON.stringify(t.recurrence) : '',
           series_id: t.series_id || '',
           color: t.color || '', // die „echte“ Farbe, damit sie nach einem Erledigt/Grau-Zyklus wiederhergestellt werden kann
@@ -228,6 +228,29 @@
   // Termin, den jemand direkt in Google angelegt hat), gelten einfach nur die sichtbaren Grundfelder.
   // Wird sowohl beim Einlesen neuer Fremd-Events als auch beim konfliktsicheren Zusammenführen vor
   // einem Patch verwendet (siehe push()).
+  // Google begrenzt jedes versteckte Zusatzfeld auf 1024 Zeichen. Rezepte (Anleitung als Notiz, viele Zutaten als Checkliste) sind
+  // länger: Text wird deshalb auf Stücke zu je 900 Zeichen verteilt (notes, notes_1 … bzw. checklist, checklist_1 …) und beim Lesen
+  // wieder zusammengesetzt. Alle Stücke werden immer mitgeschrieben (leere eingeschlossen), damit beim Kürzen nichts Altes stehen bleibt.
+  const CHUNK = 900;
+  const NOTES_CHUNKS = 6; // bis 5400 Zeichen
+  const CHECKLIST_CHUNKS = 4; // bis 3600 Zeichen JSON
+  function packChunks(prefix, value, count) {
+    const out = {};
+    for (let i = 0; i < count; i++) out[i === 0 ? prefix : `${prefix}_${i}`] = value.slice(i * CHUNK, (i + 1) * CHUNK);
+    return out;
+  }
+  function joinChunks(p, prefix, count) {
+    let s = '';
+    for (let i = 0; i < count; i++) s += p[i === 0 ? prefix : `${prefix}_${i}`] || '';
+    return s;
+  }
+  // Passt die Checkliste nicht komplett, fallen die letzten Punkte weg (ein abgeschnittenes JSON wäre unlesbar).
+  function checklistJson(items) {
+    const list = [...(items || [])];
+    while (list.length && JSON.stringify(list).length > CHUNK * CHECKLIST_CHUNKS) list.pop();
+    return JSON.stringify(list);
+  }
+
   const parseOrder = (v) => (v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
 
   function taskShapeFromEvent(ev) {
@@ -242,7 +265,8 @@
     const assignee = p.assignee || (suffixMatch ? INITIAL_TO_ASSIGNEE[suffixMatch[1]] : null) || null;
     let checklist = [];
     let recurrence = null;
-    try { checklist = p.checklist ? JSON.parse(p.checklist) : []; } catch { /* fremder/kaputter Wert: ignorieren */ }
+    const checklistRaw = joinChunks(p, 'checklist', CHECKLIST_CHUNKS);
+    try { checklist = checklistRaw ? JSON.parse(checklistRaw) : []; } catch { /* fremder/kaputter Wert: ignorieren */ }
     try { recurrence = p.recurrence ? JSON.parse(p.recurrence) : null; } catch { /* dito */ }
     const color = (!done && p.color) || (ev.colorId && ev.colorId !== DONE_COLOR ? ev.colorId : null) || p.color || '9';
     // ev.start.date fehlt, wenn der Termin eine Uhrzeit hat (start.dateTime statt start.date) – entweder
@@ -260,7 +284,7 @@
         title, due_date, due_time, due_end_time: due_time && p.dueEnd ? p.dueEnd : null,
         time_slot: false, slot_index: null, done, color,
         category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
-        notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
+        notes: joinChunks(p, 'notes', NOTES_CHUNKS), checklist, recurrence, series_id: p.series_id || null,
         bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST, order: parseOrder(p.order), planned: p.week === 'true', shop_cat: p.scat || null,
         in_calendar: false, cal_migrate: false, hidden_date: isHiddenDate(startDate) ? startDate : null,
       };
@@ -285,7 +309,7 @@
     return {
       title, due_date, due_time, due_end_time, time_slot, slot_index, done, color,
       category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
-      notes: p.notes || '', checklist, recurrence, series_id: p.series_id || null,
+      notes: joinChunks(p, 'notes', NOTES_CHUNKS), checklist, recurrence, series_id: p.series_id || null,
       bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST, order: parseOrder(p.order), planned: p.week === 'true', shop_cat: p.scat || null,
       in_calendar, cal_migrate: own && p.cal !== 'show' && !in_calendar, hidden_date: null,
     };

@@ -24,6 +24,40 @@
     if (typeof list.plan === 'boolean') return list.plan;
     return /essen|speise|gericht|rezept/i.test(list.name || '');
   }
+  // Rezepte aus einem einfachen Text lesen (Import in die Essen-Liste). Format, pro Rezept:
+  //   ## Name des Gerichts
+  //   35 Minuten · 4 Portionen · Quelle: Mealime      (beliebige Zeilen vor „Zutaten:“ gehören als Kopf zur Notiz)
+  //   Zutaten:
+  //   - 2 Salatgurken
+  //   Anleitung:
+  //   1. Reis waschen …
+  // Ergebnis: [{ title, notes, checklist: [{ text, done: false }] }]. Notiz = Kopfzeilen + Leerzeile + Anleitung.
+  function parseRecipes(text) {
+    const recipes = [];
+    let cur = null;
+    let mode = 'head';
+    const finish = () => {
+      if (!cur) return;
+      const head = cur.head.join('\n').trim();
+      const steps = cur.steps.join('\n').trim();
+      recipes.push({ title: cur.title, notes: [head, steps].filter(Boolean).join('\n\n'), checklist: cur.items.map((t) => ({ text: t, done: false })) });
+    };
+    for (const raw of String(text ?? '').replace(/\r\n?/g, '\n').split('\n')) {
+      const line = raw.trim();
+      const title = line.match(/^#{1,3}\s+(.+)$/);
+      if (title) { finish(); cur = { title: title[1].trim().slice(0, 120), head: [], items: [], steps: [] }; mode = 'head'; continue; }
+      if (!cur) continue;
+      if (/^zutaten:?$/i.test(line)) { mode = 'items'; continue; }
+      if (/^(anleitung|zubereitung):?$/i.test(line)) { mode = 'steps'; continue; }
+      if (!line) { if (mode === 'steps' && cur.steps.length && cur.steps[cur.steps.length - 1] !== '') cur.steps.push(''); continue; }
+      if (mode === 'items') { const item = line.replace(/^[-*•–]\s*/, '').trim(); if (item) cur.items.push(item.slice(0, 200)); }
+      else if (mode === 'steps') cur.steps.push(line);
+      else cur.head.push(line);
+    }
+    finish();
+    return recipes;
+  }
+
   function normalizePlacement(obj) {
     return obj && obj.list_id === INBOX_LIST ? { ...obj, list_id: MAIN_LIST, bucket: 'inbox' } : obj;
   }
@@ -290,6 +324,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, isPlanList, normalizePlacement, shoppingItems, computeOrderUpdates,
+    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, isPlanList, parseRecipes, normalizePlacement, shoppingItems, computeOrderUpdates,
   };
 });
