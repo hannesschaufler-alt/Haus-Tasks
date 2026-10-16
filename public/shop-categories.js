@@ -58,7 +58,7 @@
       passata, passierte tomaten, gehackte tomaten, kidneybohne, kichererbse, linsen, =bohnen, =mais, !thunfisch, sardellen, olive, kapern, sauerkraut,
       essiggurke, !gurkerl, pfefferoni, nutella, marmelade, konfitura, konfiture, honig, !erdnussbutter, erdnusscreme, aufstrich, brotaufstrich, musli, cornflakes,
       cerealien, nuss, mandel, rosine, trockenfruchte, !kokosmilch, kokosraspel, =ol, $ol, speiseol, !butterschmalz, schmalz, kokosfett, !milchreis, !semmelbrosel,
-      !brosel, paniermehl, suppe, blatterteig, germteig, hummus, sonnenblumenkerne, kurbiskerne, leinsamen, chiasamen, sesam, tahini, dosenmais, erdnuss, !backmischung,
+      =brosel, =broseln, paniermehl, suppe, blatterteig, germteig, hummus, sonnenblumenkerne, kurbiskerne, leinsamen, chiasamen, sesam, tahini, dosenmais, erdnuss, !backmischung,
       !marzipanrohmasse, vanillezucker, gelierzucker, !staubzucker, !puderzucker`,
     getraenke: `wasser, !mineralwasser, sprudel, soda, selters, !saft, schorle, limonade, =limo, cola, fanta, almdudler, sprite, !eistee, bier, wein, sekt, prosecco,
       spritzer, wodka, =gin, =rum, likor, schnaps, obstler, =most, kaffee, =tee, $tee, kakao, energy, redbull, radler, malzbier, !schokomilch, kaffeefilter:haushalt, ice tea, aperol,
