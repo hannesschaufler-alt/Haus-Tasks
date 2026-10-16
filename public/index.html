@@ -29,6 +29,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   .wrap { max-width: 860px; margin: 0 auto; padding: 16px; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
@@ -498,7 +499,7 @@ function taskRow(t, { handle = false, plan = null, shop = null } = {}) {
     h('div', { class: 'right' },
       (t.sources || []).length > 0 && sourceBadge(t),
       shop === 'unassigned' && h('button', { type: 'button', class: 'badge cat-pick', title: 'Einkaufskategorie wählen', onclick: (e) => { e.stopPropagation(); openCategoryMenu(t, e.currentTarget); } }, 'Kategorie …'),
-      t.checklist.length > 0 && checklistBadge(t), listMoveBadge(t), dateChip(t), avatar(t.assignee) || h('span', { class: 'avatar-slot' })),
+      t.checklist.length > 0 && !shop && checklistBadge(t), listMoveBadge(t), !shop && dateChip(t), avatar(t.assignee) || h('span', { class: 'avatar-slot' })),
     // Die aufgeklappte Checkliste bekommt eine eigene Rasterzeile darunter: so bleiben Häkchen, Titel und der
     // Auf-/Zuklapp-Knopf oben in der Zeile stehen, statt beim Aufklappen mit der Zeilenhöhe in die Mitte zu wandern.
     state.expanded.has(t.id) && t.checklist.length > 0 && h('div', { class: 'chk-wrap' }, checklistView(t)));
@@ -559,7 +560,7 @@ function openSourceMenu(t, anchor) {
 // Liste mit „Einkauf“ im Namen.
 const isPlanListId = (id) => OfflineLogic.isPlanList(state.lists.find((l) => l.id === id));
 const shoppingList = () => state.lists.find((l) => l.shopping) || state.lists.find((l) => /einkauf/i.test(l.name)) || null;
-const canSendToShopping = (t) => { const shop = shoppingList(); return !!shop && listOf(t) !== shop.id; };
+const canSendToShopping = (t) => { const shop = shoppingList(); return !!shop && listOf(t) !== shop.id && isPlanListId(listOf(t)); };
 function sendToShoppingButton(getItems, getTitle) {
   return h('button', { type: 'button', class: 'btn small', title: 'Alle Punkte als Tasks auf die Einkaufsliste setzen', onclick: (e) => { e.stopPropagation(); sendToShopping(getItems(), getTitle?.()); } },
     '🛒 An Einkaufsliste senden');
@@ -1606,11 +1607,12 @@ function makeChecklistEditor(initial, { onSend } = {}) {
   const get = () => [...rows.children]
     .map((r) => ({ text: r.querySelector('input[type=text]').value.trim(), done: r.querySelector('input[type=checkbox]').checked }))
     .filter((i) => i.text);
+  const sendBtn = onSend ? sendToShoppingButton(() => get(), onSend) : null;
   const el = h('div', {}, rows,
     h('div', { class: 'chk-actions' },
       h('button', { type: 'button', class: 'btn small chk-add', onclick: () => addRow('', false, { focus: true }) }, '＋ Punkt hinzufügen'),
-      onSend && sendToShoppingButton(() => get(), onSend)));
-  return { el, get };
+      sendBtn));
+  return { el, get, sendBtn };
 }
 
 function openForm(task) {
@@ -1658,7 +1660,7 @@ function openForm(task) {
   const who = makeAssigneePicker(t.assignee);
   const notes = h('textarea', { rows: 3 }, t.notes || '');
   notes.value = t.notes || '';
-  const chk = makeChecklistEditor(t.checklist || [], { onSend: task && canSendToShopping(t) ? () => title.value : null });
+  const chk = makeChecklistEditor(t.checklist || [], { onSend: task ? () => title.value : null });
 
 
   // Serie
@@ -1694,12 +1696,17 @@ function openForm(task) {
     const recurrence = !ty ? null : ty === 'weekly' ? { type: ty, interval: iv }
       : ty === 'monthly_weekday' ? { type: ty, interval: iv, nth: Number(nth.value), weekday: Number(wd.value) }
       : ty === 'monthly_day' ? { type: ty, interval: iv, day: Number(mday.value) } : { type: ty, interval: iv };
+    const kind = kindOf(listSel.value);
     const body = { title: title.value, due_date: date.value || null, due_time: date.value && time.value ? time.value : null,
       due_end_time: date.value && time.value && endTime.value ? endTime.value : null,
       assignee: who.get(), priority: prio.value, list_id: listSel.value, bucket: listSel.value === INBOX_LIST ? 'inbox' : (task && placeOf(task) === INBOX_LIST ? 'todo' : (task?.bucket || 'todo')),
       planned: isPlanListId(listSel.value) ? planBox.checked : false,
       ...(shoppingList()?.id === listSel.value ? { shop_cat: shopSel.value || null } : {}),
       in_calendar: !!date.value && inCal.checked, notes: notes.value, checklist: chk.get(), recurrence };
+    // Gerichte und Einkäufe brauchen keine Uhrzeit, keinen Kalender und keine Wiederholung, Einkäufe auch kein Datum – was in der
+    // Liste nicht angeboten wird, wird beim Speichern geleert (sonst würde ein unsichtbarer Rest weiterwirken, z. B. eine Serie).
+    if (kind !== 'default') { body.due_time = null; body.due_end_time = null; body.in_calendar = false; body.recurrence = null; }
+    if (kind === 'shop') body.due_date = null;
     // Bei einer Bearbeitung nur die tatsächlich geänderten Felder senden (siehe diffPatch); beim Neuanlegen
     // gibt es noch keine Vorversion, da geht das komplette Formular raus.
     const payload = task ? diffPatch(task, body) : body;
@@ -1720,30 +1727,55 @@ function openForm(task) {
 
   const field = (label, ...ctl) => h('div', { class: 'field' }, h('label', {}, label), ...ctl);
   const todayBtn = h('button', { type: 'button', class: 'btn small', title: 'Datum auf heute setzen', onclick: () => { date.value = todayStr(); date.dispatchEvent(new Event('change')); } }, 'Heute');
+  const kindOf = (listId) => (shoppingList()?.id === listId ? 'shop' : isPlanListId(listId) ? 'plan' : 'default');
+  const timeField = field('Uhrzeit (optional)', time);
+  const endField = field('Ende (optional, sonst +1 Std.)', endTime);
+  const calLabel = h('label', { for: 'optInCal', class: 'inline-check cal-check' }, inCal, h('span', {}, 'In Google Kalender anzeigen'),
+    h('small', {}, 'Ohne Haken bleibt der Task nur in der App sichtbar und wird unsichtbar zwischen den Geräten abgeglichen.'));
+  const recField = field('Wiederholung', recType);
+  const prioField = field('Priorität', prio);
+  const checkField = field('Checkliste (Enter = nächster Punkt, mehrzeiligen Text einfügen = mehrere Punkte)', chk.el);
   const planField = h('label', { for: 'optPlanned', class: 'inline-check', style: 'color:var(--text)' }, planBox, h('span', {}, '🍽 Steht auf dem Plan „Diese Woche“'));
   const shopField = field('Einkaufskategorie', shopSel);
   const sourceHint = (t.sources || []).length ? h('div', { class: 'hint' }, '🍽 Zutat für: ' + t.sources.join(', ')) : null;
-  const syncPlan = () => { planField.hidden = !isPlanListId(listSel.value); shopField.hidden = shoppingList()?.id !== listSel.value; };
-  listSel.addEventListener('change', syncPlan);
-  syncPlan();
+  // Je nach Liste zeigt das Formular nur, was dort Sinn ergibt:
+  //   Einkaufsliste: Titel, Zuständigkeit, Liste, Einkaufskategorie, Notizen          (kein Datum/Uhrzeit/Priorität/Wiederholung/Checkliste/Kalender)
+  //   Speiseplan („Essen“): wie Tasks, aber ohne Uhrzeit/Priorität/Wiederholung/Kalender; dafür „Steht auf dem Plan“ und „An Einkaufsliste senden“
+  //   alle anderen: alles außer Einkaufskategorie, „Steht auf dem Plan“ und „An Einkaufsliste senden“
+  const dateRow = h('div', { class: 'row2' }, field('Datum', h('div', { class: 'date-row' }, date, todayBtn)), timeField);
+  const syncKind = () => {
+    const k = kindOf(listSel.value);
+    dateRow.hidden = k === 'shop';
+    timeField.hidden = k !== 'default';
+    endField.hidden = k !== 'default';
+    calLabel.hidden = k !== 'default';
+    recField.hidden = k !== 'default';
+    recOpts.hidden = k !== 'default';
+    prioField.hidden = k !== 'default';
+    checkField.hidden = k === 'shop';
+    if (chk.sendBtn) chk.sendBtn.hidden = k !== 'plan' || !shoppingList();
+    planField.hidden = k !== 'plan';
+    shopField.hidden = k !== 'shop';
+  };
+  listSel.addEventListener('change', syncKind);
+  syncKind();
   form.onsubmit = save;
   form.replaceChildren(
     h('h3', {}, task ? 'Task bearbeiten' : 'Neuer Task'),
     syncInfo,
     field('Titel', title),
-    h('div', { class: 'row2' }, field('Datum', h('div', { class: 'date-row' }, date, todayBtn)), field('Uhrzeit (optional)', time)),
-    field('Ende (optional, sonst +1 Std.)', endTime),
-    h('label', { for: 'optInCal', class: 'inline-check cal-check' }, inCal, h('span', {}, 'In Google Kalender anzeigen'),
-      h('small', {}, 'Ohne Haken bleibt der Task nur in der App sichtbar und wird unsichtbar zwischen den Geräten abgeglichen.')),
-    field('Wiederholung', recType),
+    dateRow,
+    endField,
+    calLabel,
+    recField,
     recOpts,
     field('Zuständigkeit', who.el),
-    h('div', { class: 'row2' }, field('Priorität', prio), field('Liste', listSel)),
+    h('div', { class: 'row2' }, prioField, field('Liste', listSel)),
     planField,
     shopField,
     sourceHint,
     field('Notizen', notes),
-    field('Checkliste (Enter = nächster Punkt, mehrzeiligen Text einfügen = mehrere Punkte)', chk.el),
+    checkField,
     err,
     h('div', { class: 'actions' },
       task ? h('button', { type: 'button', class: 'btn danger', onclick: async () => { $('#dlg').close(); await removeTask(task); } }, 'Löschen') : h('span'),
