@@ -103,3 +103,17 @@ test('Kategorienliste: feste Reihenfolge, eindeutige IDs, Beschriftungen', () =>
   assert.strictEqual(SC.labelOf('obst'), 'Obst & Gemüse');
   assert.strictEqual(SC.labelOf(null), 'Nicht zugeordnet');
 });
+
+test('Zutaten der ersten Mealime-Rezepte (Reisschüssel, Erdnuss-Tofu, Mediterraner Salat) werden alle erkannt', () => {
+  const cases = {
+    obst: ['Salatgurken', 'Knoblauchzehen', 'Ingwer', 'Frühlingszwiebeln', 'Brokkoli', 'Karotten', 'Limette', 'Baby-Spinat', 'Cherrytomaten', 'Zitrone', 'gelbe Paprika'],
+    fleisch: ['Mageres Rindfaschiertes'],
+    milch: ['Tofu', 'Feta, zerbröselt'],
+    vorrat: ['Jasminreis', 'Honig (4 TL)', 'Sesamöl', 'Kokosöl', 'Natur-Erdnussbutter', 'Sesam', 'Kichererbsen', 'Kalamata-Oliven', 'Olivenöl extra vergine'],
+    gewuerze: ['Reisessig', 'Sojasauce', 'Chili-Knoblauch-Sauce', 'Chiliflocken', 'Salz', 'Schwarzer Pfeffer', 'Koriander, gemahlen', 'Dijon-Senf', 'Knoblauchpulver', 'Zwiebelpulver', 'Oregano, getrocknet', 'Rotweinessig'],
+    brot: ['Vollkorn-Pitabrote'],
+  };
+  const failures = [];
+  for (const [expected, items] of Object.entries(cases)) for (const i of items) if (cat(i) !== expected) failures.push(`${i}: ${cat(i)} statt ${expected}`);
+  assert.deepStrictEqual(failures, []);
+});
