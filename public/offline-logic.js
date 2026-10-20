@@ -241,6 +241,23 @@
     return { tasks: tasks.map((t) => (t.id === id ? { ...t, deleted: true, updated_at: nowIso() } : t)) };
   }
 
+  // Aufräumen der Einkaufsliste: erledigte Einträge, die seit mehr als `days` Tagen erledigt sind. Ausnahme: Mit einer von Hand gewählten
+  // Einkaufskategorie (`shop_cat`) bleibt pro Name der jüngste erledigte Eintrag als „Gedächtnis“ liegen, damit die App die Zuordnung für
+  // diesen Namen behält (siehe shop-categories.js, buildLearned). `normalize`: Namens-Normalisierung (ShopCategories.normalizeItem).
+  function staleDoneIds(tasks, { now = Date.now(), days = 7, normalize = (s) => String(s).trim().toLowerCase() } = {}) {
+    const cutoff = now - days * 864e5;
+    const stamp = (t) => Date.parse(t.done_at || t.updated_at || '');
+    const old = tasks.filter((t) => t.done && !t.deleted && Number.isFinite(stamp(t)) && stamp(t) < cutoff);
+    const keep = new Map(); // Name → jüngster erledigter Eintrag mit manueller Kategorie
+    for (const t of old) {
+      if (!t.shop_cat) continue;
+      const key = normalize(t.title);
+      if (!keep.has(key) || stamp(t) > stamp(keep.get(key))) keep.set(key, t);
+    }
+    const keepIds = new Set([...keep.values()].map((t) => t.id));
+    return old.filter((t) => !keepIds.has(t.id)).map((t) => t.id);
+  }
+
   // Zutaten einer Checkliste für die Einkaufsliste: Texte ohne Doppelte, ohne das, was dort schon offen steht
   // (Groß-/Kleinschreibung egal). `existing`: die Tasks der Einkaufsliste.
   function shoppingItems(checklist, existing) {
@@ -336,6 +353,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, cleanSources, isPlanList, parseRecipes, normalizePlacement, shoppingItems, computeOrderUpdates,
+    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, staleDoneIds, cleanSources, isPlanList, parseRecipes, normalizePlacement, shoppingItems, computeOrderUpdates,
   };
 });

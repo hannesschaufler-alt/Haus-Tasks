@@ -750,6 +750,26 @@ async function moveToLater(t) {
 
 // Einmalige Umstellung: der frühere Status „Später“ ist jetzt die Liste „Später“. Läuft nach jedem Laden/Sync, weil
 // ein noch nicht aktualisiertes Gerät weiterhin Tasks mit dem alten Status anlegen kann.
+// Einkaufsliste aufräumen: erledigte Einträge werden nach 7 Tagen gelöscht (Häkchen im ✎-Dialog der Einkaufsliste, Vorgabe: an).
+// Läuft nach dem Laden und nach jedem Sync; auf mehreren Geräten gleichzeitig ist es harmlos (Löschen eines schon gelöschten Termins
+// wird übergangen). Die zuletzt von Hand kategorisierten Einträge je Name bleiben als Gedächtnis liegen (siehe OfflineLogic.staleDoneIds).
+let cleaningShop = false;
+async function cleanupShoppingDone() {
+  if (cleaningShop) return;
+  const shop = shoppingList();
+  if (!shop || shop.cleanup === false) return;
+  cleaningShop = true;
+  try {
+    const mine = state.tasks.filter((t) => listOf(t) === shop.id);
+    const ids = OfflineLogic.staleDoneIds(mine, { normalize: ShopCategories.normalizeItem });
+    if (!ids.length) return;
+    for (const id of ids) await Offline.mutate('task', 'delete', { id });
+    await reload();
+    kickSync();
+    toast(`${ids.length} erledigte${ids.length === 1 ? 'r Eintrag' : ' Einträge'} aus „${shop.name}“ aufgeräumt (älter als 7 Tage).`);
+  } catch (e) { /* beim nächsten Mal erneut */ } finally { cleaningShop = false; }
+}
+
 let migratingLater = false;
 async function migrateLater() {
   if (migratingLater) return;
@@ -1372,7 +1392,12 @@ function openListForm(list) {
   const used = new Set(state.lists.map((l) => l.color));
   const freeColor = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
   const picker = makeSwatches(list?.color || freeColor);
-  const shopBox = h('input', { type: 'checkbox', id: 'optShop', checked: !!list?.shopping });
+  const shopBox = h('input', { type: 'checkbox', id: 'optShop', checked: !!list && shoppingList()?.id === list.id });
+  const cleanBox = h('input', { type: 'checkbox', id: 'optClean', checked: list?.cleanup !== false });
+  const cleanField = h('label', { for: 'optClean', class: 'inline-check', style: 'color:var(--text)' }, cleanBox, h('span', {}, '🧹 Erledigte Einträge nach 7 Tagen automatisch löschen'));
+  const syncClean = () => { cleanField.hidden = !shopBox.checked; };
+  shopBox.addEventListener('change', syncClean);
+  syncClean();
   const planListBox = h('input', { type: 'checkbox', id: 'optPlanList', checked: OfflineLogic.isPlanList(list) });
   // Gespeichert wird der Haken nur, wenn er von der Namenserkennung (siehe isPlanList) abweicht – sonst gilt weiter der Name.
   // Bei einer neuen Liste folgt der Haken dem getippten Namen („Essen“ → an), bis man ihn selbst anfasst.
@@ -1384,8 +1409,8 @@ function openListForm(list) {
     return planListBox.checked === OfflineLogic.isPlanList(rest) ? rest : { ...rest, plan: planListBox.checked };
   });
   const withShopping = (lists, id) => lists.map((l) => {
-    const { shopping, ...rest } = l;
-    if (l.id === id) return shopBox.checked ? { ...rest, shopping: true } : rest;
+    const { shopping, cleanup, ...rest } = l;
+    if (l.id === id) return shopBox.checked ? { ...rest, shopping: true, ...(cleanBox.checked ? {} : { cleanup: false }) } : rest;
     return shopBox.checked ? rest : l; // nur eine Liste ist die Einkaufsliste
   });
   nameInput.addEventListener('input', () => { if (!planTouched) planListBox.checked = OfflineLogic.isPlanList({ name: nameInput.value }); });
@@ -1440,6 +1465,7 @@ function openListForm(list) {
     h('label', { for: 'optShop', class: 'inline-check', style: 'color:var(--text)' }, shopBox, h('span', {}, '🛒 Das ist meine Einkaufsliste')),
     h('label', { for: 'optPlanList', class: 'inline-check', style: 'color:var(--text)' }, planListBox, h('span', {}, '🍽 Speiseplan (oben „Diese Woche“, unten „Katalog“)')),
     h('div', { class: 'hint' }, 'Gerichte lassen sich per Ziehen oder mit ＋ auf den Plan setzen. Hakt man ein geplantes Gericht ab („gekocht“), geht es zurück in den Katalog, mit frischer Checkliste. Ohne ausdrückliche Wahl erkennt die App Listen wie „Essen“ oder „Speiseplan“ am Namen.'),
+    cleanField,
     h('div', { class: 'hint' }, 'Aus der Checkliste eines Tasks (z. B. den Zutaten eines Gerichts) lassen sich alle Punkte mit einem Klick auf diese Liste setzen. Ohne Markierung gilt die erste Liste mit „Einkauf“ im Namen.'),
     !isNew && h('div', { class: 'hint' }, 'Beim Umfärben ziehen die offenen Tasks der Liste mit.' + (main ? ' „Inbox“ und „Geplant“ gehören zur Grundausstattung und können nicht gelöscht werden.' : '')),
     err,
@@ -1902,6 +1928,7 @@ async function syncNow(silent) {
   checkOrphanLists();
   if (syncAgain) { syncAgain = false; setTimeout(() => syncNow(true), 200); }
   setTimeout(migrateLater, 0); // erst nach dem Sync-Durchlauf (siehe migrateLater)
+  setTimeout(cleanupShoppingDone, 500);
   if (syncBtn()) syncBtn().disabled = false;
   render();
 }
@@ -2033,6 +2060,7 @@ async function boot() {
   await reload();
   checkOrphanLists();
   migrateLater();
+  setTimeout(cleanupShoppingDone, 1500);
   syncNow(true); // Sync beim Öffnen
 }
 

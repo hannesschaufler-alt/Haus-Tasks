@@ -79,3 +79,23 @@ test('Herkunft der Zutat (Rezept-Titel): bereinigt, im Termin gespeichert, kommt
   const lang = S.eventBody({ ...t, sources: Array.from({ length: 8 }, (_, i) => `Rezept mit einem sehr langen Namen Nummer ${i} `.repeat(2).slice(0, 80)), priority: 'mittel', color: '9' });
   assert.ok(lang.extendedProperties.private.src.length <= 900);
 });
+
+test('Einkaufsliste aufräumen: erledigte Einträge nach 7 Tagen weg; offene und frisch erledigte bleiben; manuell kategorisierte als Gedächtnis (jüngster je Name)', () => {
+  const now = Date.parse('2026-10-20T12:00:00Z');
+  const day = (n) => new Date(now - n * 864e5).toISOString();
+  const tasks = [
+    { id: 'a', title: 'Milch', done: true, done_at: day(10) }, // alt: weg
+    { id: 'b', title: 'Brot', done: true, done_at: day(8) }, // alt: weg
+    { id: 'c', title: 'Eier', done: true, done_at: day(3) }, // frisch erledigt: bleibt
+    { id: 'd', title: 'Butter', done: false }, // offen: bleibt
+    { id: 'e', title: 'Dings vom Markt', done: true, done_at: day(30), shop_cat: 'obst' }, // älter, gleicher Name …
+    { id: 'f', title: '2 Dings vom Markt', done: true, done_at: day(9), shop_cat: 'obst' }, // … jüngster mit Kategorie bleibt als Gedächtnis
+    { id: 'g', title: 'Altes Zeug', done: true, updated_at: day(20) }, // ohne done_at: updated_at zählt
+    { id: 'h', title: 'Gelöscht', done: true, done_at: day(40), deleted: true }, // schon gelöscht: nicht nochmal
+    { id: 'i', title: 'Kaputt', done: true, done_at: 'quatsch' }, // unlesbares Datum: lieber nichts tun
+  ];
+  const ids = L.staleDoneIds(tasks, { now, normalize: (s) => s.toLowerCase().replace(/^\d+\s*/, '') });
+  assert.deepStrictEqual(ids.sort(), ['a', 'b', 'e', 'g']);
+  assert.deepStrictEqual(L.staleDoneIds([], { now }), []);
+  assert.deepStrictEqual(L.staleDoneIds(tasks, { now, days: 60 }), [], 'mit längerer Frist bleibt alles');
+});
