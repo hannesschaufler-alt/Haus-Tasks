@@ -61,9 +61,22 @@
 
   /* Klappbare Abschnitte ("Anstehend"/"Später") – bewusst unauffälliger als der frühere Navigationsblock. */
   .section { margin-bottom: 18px; }
-  .section-header { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 4px 0; user-select: none; }
-  .toggle-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; min-width: 22px;
-    border-radius: 50%; background: var(--chip); font-weight: 700; font-size: 15px; line-height: 1; }
+  /* Einheitliche Abschnittsüberschrift (auch .plan-head für Kategorien/Plan): Satzschreibung, 13px halbfett, Zahl dezent. */
+  .section-header { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0 6px; user-select: none; min-height: 32px; }
+  .section-header strong { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .section.today .section-header strong { color: var(--accent); }
+  .count, .section-header .count, .plan-head .count { font-size: 12px; font-weight: 500; color: var(--muted); background: var(--chip); border-radius: 999px; padding: 0 7px; line-height: 18px; }
+  .head-right { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+  .tools-btn { position: relative; padding: 4px 6px; }
+  .tools-btn.active { color: var(--accent); }
+  .tools-dot { position: absolute; top: 2px; right: 2px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .tools-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 10px; padding: 8px 10px; background: var(--chip); border-radius: 10px; }
+  .tools-panel .filters { margin: 0; }
+  .tools-panel .filters .group { margin: 0; }
+  .ico { display: inline-flex; width: 18px; height: 18px; }
+  .ico svg { width: 18px; height: 18px; }
+  .toggle-icon { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; min-width: 18px;
+    border-radius: 50%; background: var(--chip); font-weight: 700; font-size: 13px; line-height: 1; color: var(--muted); }
   .section-header:hover .toggle-icon { background: var(--accent); color: var(--accent-text); }
 
   /* Schnellerfassung: bewusst nur ein Titel-Feld, Enter legt sofort einen Inbox-Task an. */
@@ -75,7 +88,11 @@
     background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius); }
   .inbox-row .title { cursor: pointer; }
   .inbox-row .actions { display: flex; align-items: center; gap: 4px; }
-  .inbox-row .badge.list-move { padding: 1px 8px; font-size: 11.5px; }
+  .inbox-row .badge.list-move { padding: 2px 9px; font-size: 12px; }
+  .inbox-row .badge.list-move.pri { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .inbox-row .badge.list-move.pri:hover { filter: brightness(1.08); color: var(--accent-text); }
+  .inbox-row .icon-btn { color: var(--muted); }
+  .inbox-row .icon-btn:hover { color: var(--text); }
   .inbox-row .icon-btn { padding: 2px 6px; }
   /* Deutlich sichtbarer Rahmen statt der reinen Chip-Füllung: die sonst übliche .badge-Füllfarbe
      (--chip) liegt hier auf einem ebenfalls schon getönten Untergrund (Inbox-Zeile/Task-Karte) und
@@ -93,15 +110,17 @@
   /* Listen-Reiter unter der Kopfzeile */
   .tabs { display: flex; align-items: center; gap: 4px; margin: 0 0 12px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
   .tabs::-webkit-scrollbar { display: none; }
-  .tab { flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: none;
-    color: var(--muted); font-weight: 500; margin-bottom: -1px; white-space: nowrap; }
+  .tab { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 9px 12px; border: 0; border-bottom: 2px solid transparent; background: none;
+    color: var(--muted); font-weight: 500; margin-bottom: -1px; white-space: nowrap; font-size: 14px; }
   .tab:hover { color: var(--text); }
-  .tab.on { color: var(--text); border-bottom-color: var(--c, var(--accent)); }
-  .tab .dot-c { width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
+  .tab.on { color: var(--text); font-weight: 600; border-bottom-color: var(--c, var(--accent)); }
+  .tab .dot-c { width: 7px; height: 7px; border-radius: 50%; background: var(--c); opacity: .5; }
+  .tab.on .dot-c { opacity: 1; }
   .tab.list { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: grab; }
   .tab.dragging { position: relative; z-index: 2; cursor: grabbing; background: var(--chip); border-radius: 8px 8px 0 0; box-shadow: var(--shadow); }
   .tab.add { padding: 8px 10px; font-size: 16px; }
-  .tab.edit { margin-left: auto; padding: 8px 10px; }
+  .tab.more { margin-left: auto; padding: 6px 10px; }
+  .tab.more .ico { width: 20px; height: 20px; } .tab.more .ico svg { width: 20px; height: 20px; }
   .section-header.static { cursor: default; }
   .chip { border: 1px solid var(--line); background: var(--chip); color: var(--text); padding: 3px 10px; border-radius: 999px; font-size: 13px; }
   .chip.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
@@ -169,18 +188,28 @@
   .date-menu button { border: 0; background: none; color: var(--text); text-align: left; padding: 9px 12px; border-radius: 7px; font: inherit; cursor: pointer; }
   .date-menu button:hover { background: var(--chip); }
   .section.today { border-left: 3px solid var(--accent); padding-left: 10px; margin-left: -2px; background: color-mix(in srgb, var(--accent) 5%, transparent); border-radius: 0 10px 10px 0; }
-  .plan-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+  .plan-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13px; font-weight: 600;
     color: var(--muted); background: var(--chip); border-bottom: 1px solid var(--line); }
   .plan-head.week { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--card)); border-left: 3px solid var(--accent); }
   .plan-head.cat { cursor: pointer; }
   .plan-head.unassigned { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--card)); border-left: 3px solid var(--accent); }
-  .plan-hint { text-transform: none; letter-spacing: normal; font-size: 12px; color: var(--muted); }
+  .plan-hint { font-size: 12px; font-weight: 400; color: var(--muted); }
   .badge.cat-pick { border: 1px dashed var(--accent); background: none; color: var(--accent); cursor: pointer; font: inherit; font-size: 11.5px; padding: 1px 8px; }
   .badge.src-badge { border: none; background: var(--chip); color: inherit; cursor: pointer; font: inherit; font-size: 11.5px; padding: 1px 7px; gap: 3px; }
   .badge.src-badge:hover { outline: 1px solid var(--accent); }
   .src-menu { max-width: min(320px, calc(100vw - 16px)); }
   .src-head { padding: 6px 12px 2px; font-size: 12px; color: var(--muted); }
   .src-menu button:disabled { opacity: .55; cursor: default; }
+  .more-opts { border: 1px solid var(--line); border-radius: 10px; padding: 0; }
+  .more-opts > summary { cursor: pointer; padding: 10px 12px; font-size: 14px; font-weight: 500; list-style: none; display: flex; align-items: baseline; gap: 8px; }
+  .more-opts > summary::-webkit-details-marker { display: none; }
+  .more-opts > summary::before { content: '＋'; color: var(--muted); font-weight: 400; }
+  .more-opts[open] > summary::before { content: '−'; }
+  .more-opts > summary small { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .more-opts[open] { padding: 0 12px 12px; display: grid; gap: 12px; }
+  .more-opts[open] > summary { padding: 10px 0 0; }
+  button:focus-visible, a:focus-visible, summary:focus-visible, .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn:active, .chip:active, .badge.list-move:active { transform: scale(.97); }
   .cat-menu { max-height: calc(100dvh - 24px); overflow-y: auto; }
   .plan-empty { padding: 12px; color: var(--muted); font-size: 13px; font-style: italic; border-bottom: 1px solid var(--line); }
   .plan-add { width: 22px; height: 22px; min-width: 22px; border-radius: 50%; border: 2px dashed var(--ring); background: none; color: var(--ring); font-size: 14px; line-height: 1;
@@ -193,7 +222,9 @@
   .title { font-weight: 500; overflow-wrap: anywhere; line-height: 1.3; }
   .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 4px; font-size: 12.5px; color: var(--muted); align-items: center; }
   .badge { padding: 2px 9px; border-radius: 999px; background: var(--chip); font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
-  .empty { text-align: center; color: var(--muted); padding: 32px 0; }
+  .empty { text-align: center; color: var(--muted); padding: 28px 16px; display: grid; gap: 4px; }
+  .empty strong { color: var(--text); font-weight: 600; font-size: 15px; }
+  .empty span { font-size: 13.5px; }
 
   .avatar { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
     min-width: 28px; min-height: 28px; max-width: 28px; max-height: 28px; aspect-ratio: 1; border-radius: 50%;
@@ -288,6 +319,8 @@
     header { flex-wrap: wrap; }
     .group-card h2 { flex-wrap: wrap; }
     #form { padding: 16px; }
+    dialog { margin: auto 0 0 0; width: 100%; max-width: 100%; border-radius: 16px 16px 0 0; max-height: 92dvh; animation: sheet .22s ease-out; }
+    @keyframes sheet { from { transform: translateY(28px); opacity: .5; } to { transform: none; opacity: 1; } }
     .sw { width: 34px; height: 34px; }
     .avatar { width: 30px; height: 30px; min-width: 30px; min-height: 30px; max-width: 30px; max-height: 30px; font-size: 13px; }
     .actions { flex-wrap: wrap; }
@@ -323,6 +356,12 @@
 <script src="offline.js"></script>
 <script>
 const $ = (s, r = document) => r.querySelector(s);
+// replaceChildren(null/false) schreibt sonst die Wörter „null“/„false“ in die Seite (z. B. bei „cond && h(…)“ in den Formularen):
+// leere Einträge einfach auslassen.
+{
+  const original = Element.prototype.replaceChildren;
+  Element.prototype.replaceChildren = function (...kids) { return original.apply(this, kids.filter((k) => k != null && k !== false)); };
+}
 // Feste Listen-IDs (gleich wie in offline-logic.js). Hier bewusst nicht aus OfflineLogic gelesen: lädt der Browser nach einem
 // Update noch eine ältere offline-logic.js, wäre der Wert undefined und eine damit angelegte Liste würde stillschweigend
 // verworfen.
@@ -335,7 +374,7 @@ const ASSIGNEES = ['Caro', 'Hannes'];
 const ASSIGNEE_INITIAL = { Caro: 'C', Hannes: 'H' };
 const ASSIGNEE_COLOR = { Caro: '#e05297', Hannes: '#2f6fed' }; // nur fürs Avatar-Kürzel, unabhängig von Kategoriefarben
 const state = {
-  tasks: [], cfg: null, status: null, assignees: new Set(), lists: [{ id: 'inbox', name: 'Inbox', color: '6' }, { id: 'tasks', name: 'Geplant', color: '9' }], listId: 'inbox', todayOpen: true, catalogOpen: true, showDone: false, sort: 'due', expanded: new Set(),
+  tasks: [], cfg: null, status: null, assignees: new Set(), lists: [{ id: 'inbox', name: 'Inbox', color: '6' }, { id: 'tasks', name: 'Geplant', color: '9' }], listId: 'inbox', todayOpen: true, catalogOpen: true, toolsOpen: false, showDone: false, sort: 'due', expanded: new Set(),
   lastSyncAt: null, lastSyncError: null, online: true, syncHistory: [], selecting: false, selected: new Set(),
   sortByList: (() => { try { return JSON.parse(localStorage.getItem('haus-tasks-sorts') || '{}'); } catch { return {}; } })(),
   todoOpen: true, laterOpen: false, // "Später" bewusst standardmäßig eingeklappt, weniger prominent als "Anstehend"
@@ -416,7 +455,9 @@ function dateChip(t) {
   const cls = t.done ? ' done' : diff < 0 ? ' late' : diff <= 1 ? ' soon' : '';
   const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? ` ’${String(d.getFullYear()).slice(2)}` : '';
   const timeLabel = t.due_time && (t.due_end_time ? `${t.due_time}–${t.due_end_time}` : t.due_time);
-  const label = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }).replace(/\.,\s*/, ' ') + yearSuffix + (timeLabel ? ` · ${timeLabel}` : '');
+  // Nah dran lieber als Wort („Heute“, „Morgen“, „vor 3 Tagen“), sonst Wochentag und Datum.
+  const near = diff === 0 ? 'Heute' : diff === 1 ? 'Morgen' : diff === -1 ? 'Gestern' : diff < 0 && diff >= -14 ? `vor ${-diff} Tagen` : null;
+  const label = (near ?? (d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }).replace(/\.,\s*/, ' ') + yearSuffix)) + (timeLabel ? ` · ${timeLabel}` : '');
   return h('span', { class: 'date-chip' + cls, title: fmtDate(t.due_date) + (timeLabel ? `, ${timeLabel} Uhr` : '') + (t.in_calendar ? ' · steht im Google-Kalender' : '') + ' – antippen zum Ändern', onclick: openMenu }, label, t.in_calendar && h('span', { class: 'cal-mark' }, '📅'), picker);
 }
 
@@ -834,7 +875,7 @@ async function removeTask(t) {
 function taskList(list, emptyText, sortFn) {
   const rows = sorted(list, sortFn);
   const manual = !sortFn && currentSortKey() === 'manual' && !state.selecting && !state.assignees.size;
-  const el = h('div', { class: 'list' }, rows.length ? rows.map((t) => taskRow(t, { handle: manual && !t.done })) : h('div', { class: 'empty' }, emptyText));
+  const el = h('div', { class: 'list' }, rows.length ? rows.map((t) => taskRow(t, { handle: manual && !t.done })) : h('div', { class: 'empty' }, ...(Array.isArray(emptyText) ? [h('strong', {}, emptyText[0]), h('span', {}, emptyText[1])] : [emptyText])));
   if (manual) {
     for (const row of el.querySelectorAll('.task.manual')) {
       attachSort({ item: row, handle: row.querySelector('.row-drag'), container: el, itemSel: '.task.manual', axis: 'y', mode: 'now',
@@ -879,6 +920,15 @@ function chipGroup(label, names, set) {
 // Taskliste, zwei gleichzeitige Aufrufe würden sich sonst gegenseitig überschreiben.
 let quickCaptureChain = Promise.resolve();
 function initQuickCapture() {
+  // Tastenkürzel: „n“ oder „/“ springt ins Eingabefeld (wenn gerade nicht getippt wird), Escape schließt offene Menüs.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeDateMenu();
+    if ((e.key === 'n' || e.key === '/') && !e.ctrlKey && !e.metaKey && !e.altKey && !$('#dlg').open) {
+      const a = document.activeElement;
+      if (a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) return;
+      if (!$('#quickForm').hidden) { e.preventDefault(); $('#quickInput').focus(); }
+    }
+  });
   const form = $('#quickForm');
   const input = $('#quickInput');
   form.addEventListener('submit', (e) => {
@@ -919,30 +969,71 @@ async function completeFromInbox(t) {
 }
 
 function inboxRow(t) {
+  // Abhaken (2-Minuten-Regel), „Heute“ und „Geplant“ direkt in der Zeile; „Später“ und „Verwerfen“ im Menü.
   return h('div', { class: 'inbox-row' },
     h('span', { class: 'title', onclick: () => openForm(t) }, t.title),
     h('div', { class: 'actions' },
-      h('button', { class: 'badge list-move ok', title: '2-Minuten-Regel: gleich erledigt', onclick: () => completeFromInbox(t) }, '✓'),
-      h('button', { class: 'badge list-move', title: 'Heute erledigen (Datum = heute)', onclick: () => triageInbox(t, { bucket: 'todo', due_date: todayStr() }) }, 'Heute'),
+      h('button', { class: 'badge list-move ok', title: 'Gleich erledigt (2-Minuten-Regel)', 'aria-label': 'Gleich erledigt', onclick: () => completeFromInbox(t) }, '✓'),
+      h('button', { class: 'badge list-move pri', title: 'Heute erledigen (Datum = heute)', onclick: () => triageInbox(t, { bucket: 'todo', due_date: todayStr() }) }, 'Heute'),
       h('button', { class: 'badge list-move', title: 'In die Liste „Geplant“', onclick: () => triageInbox(t, { bucket: 'todo' }) }, 'Geplant'),
-      h('button', { class: 'badge list-move', title: 'In die Liste „Später“', onclick: () => moveToLater(t) }, 'Später'),
-      h('button', { class: 'icon-btn', title: 'Verwerfen', onclick: () => removeTask(t) }, '✕')));
+      h('button', { class: 'icon-btn', title: 'Mehr', 'aria-label': 'Mehr', onclick: (e) => { e.stopPropagation(); openActionMenu(e.currentTarget, [['Auf später', () => moveToLater(t)], ['Verwerfen', () => removeTask(t)]]); } }, iconEl('dots'))));
 }
 
 function inboxSection() {
   const items = state.tasks.filter((t) => listOf(t) === MAIN_LIST && t.bucket === 'inbox').sort(newestCmp);
   if (!items.length) return null;
   return h('div', { class: 'section' },
-    h('div', { class: 'section-header static' }, h('strong', {}, `Zu sortieren (${items.length})`)),
+    staticHeader('Zu sortieren', items.length),
     h('div', { class: 'inbox-list' }, items.map(inboxRow)));
 }
 
 // Klappbare Abschnitts-Überschrift – hält "Später" bewusst unauffällig (standardmäßig eingeklappt),
 // statt wie zuvor als eigener, prominenter Navigationsblock ganz oben.
-function sectionHeader(title, count, open, onToggle) {
+function sectionHeader(title, count, open, onToggle, right) {
   return h('div', { class: 'section-header', onclick: onToggle },
     h('span', { class: 'toggle-icon' }, open ? '−' : '+'),
-    h('strong', {}, `${title} (${count})`));
+    h('strong', {}, title), h('span', { class: 'count' }, String(count)),
+    right && h('span', { class: 'head-right' }, right));
+}
+// Gleiche Überschrift ohne Auf-/Zuklappen (Listen mit nur einem Abschnitt).
+function staticHeader(title, count, right) {
+  return h('div', { class: 'section-header static' },
+    h('strong', {}, title), count != null && h('span', { class: 'count' }, String(count)),
+    right && h('span', { class: 'head-right' }, right));
+}
+
+// Kleine Symbole (fest eingebaute SVGs, keine Nutzereingaben).
+const ICONS = {
+  dots: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
+  sliders: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>',
+};
+function iconEl(name) { const e = document.createElement('span'); e.className = 'ico'; e.innerHTML = ICONS[name]; return e; }
+
+// Filter, Sortierung und „Auswählen“ sind standardmäßig eingeklappt (ein Symbol neben der Überschrift); ein Punkt am Symbol zeigt,
+// dass etwas davon aktiv ist.
+function toolsActive() {
+  const list = currentList();
+  return state.assignees.size > 0 || state.showDone || state.selecting || (SORTS[currentSortKey()] && currentSortKey() !== defaultSortKey(list));
+}
+function toolsButton() {
+  return h('button', { type: 'button', class: 'icon-btn tools-btn' + (toolsActive() ? ' active' : ''), title: 'Filter, Sortierung, Auswählen', 'aria-label': 'Filter, Sortierung, Auswählen',
+    onclick: (e) => { e.stopPropagation(); state.toolsOpen = !state.toolsOpen; render(); } },
+    iconEl('sliders'), toolsActive() && h('span', { class: 'tools-dot' }));
+}
+const showTools = () => state.toolsOpen || state.selecting;
+const selectToggleButton = () => h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) }, state.selecting ? 'Auswahl beenden' : '☑ Auswählen');
+
+// Zeilen-Menü der Inbox („Später“, „Verwerfen“) und Menü am Ende der Reiterleiste.
+function openActionMenu(anchor, items) {
+  closeDateMenu();
+  const menu = h('div', { class: 'date-menu', onclick: (e) => e.stopPropagation() },
+    ...items.map(([label, fn]) => h('button', { type: 'button', onclick: (e) => { e.stopPropagation(); closeDateMenu(); fn(); } }, label)));
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth, hgt = menu.offsetHeight;
+  menu.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + 'px';
+  menu.style.top = (r.bottom + hgt + 8 > innerHeight ? Math.max(8, r.top - hgt - 4) : r.bottom + 4) + 'px';
+  setTimeout(() => document.addEventListener('click', closeDateMenu, { once: true }), 120);
 }
 
 // Speiseplan-Liste: EIN Raster mit zwei Abschnitten „Diese Woche“ und „Katalog“. Die Zeilen lassen sich per Griff innerhalb
@@ -955,7 +1046,7 @@ function planPage(list) {
   const canDrag = !state.selecting;
   const el = h('div', { class: 'list plan' });
   const head = (label, count, section, onclick) => h('div', { class: 'plan-head ' + section, 'data-section': section, onclick },
-    onclick && h('span', { class: 'toggle-icon' }, state.catalogOpen ? '−' : '+'), h('strong', {}, `${label} (${count})`));
+    onclick && h('span', { class: 'toggle-icon' }, state.catalogOpen ? '−' : '+'), h('strong', {}, label), h('span', { class: 'count' }, String(count)));
   el.append(head('Diese Woche', week.length, 'week'));
   for (const t of week) el.append(taskRow(t, { handle: canDrag, plan: 'week' }));
   if (!week.length) el.append(h('div', { class: 'plan-empty' }, 'Noch nichts geplant – zieh ein Gericht hierher oder tippe beim Gericht auf ＋.'));
@@ -969,9 +1060,9 @@ function planPage(list) {
   }
   return h('div', {},
     h('div', { class: 'section' },
-      h('div', { class: 'section-header static' }, h('strong', {}, `${list.name}`)),
-      h('div', { class: 'toolbar' },
-        h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) }, state.selecting ? 'Auswahl beenden' : '☑ Auswählen'),
+      staticHeader(list.name, null, toolsButton()),
+      showTools() && h('div', { class: 'tools-panel' },
+        selectToggleButton(),
         h('span', { style: 'flex:1' }),
         h('button', { class: 'btn small', title: 'Rezepte aus einem Text einfügen', onclick: () => openRecipeImport(list) }, '📥 Rezepte importieren')),
       el),
@@ -1067,7 +1158,7 @@ function shopPage(list) {
     if (!items.length) continue;
     const open = items.filter((t) => !t.done).length;
     el.append(h('div', { class: 'plan-head' + (id === null ? ' unassigned' : ''), 'data-cat': id ?? '' },
-      h('strong', {}, `${SC.labelOf(id)} (${open})`),
+      h('strong', {}, SC.labelOf(id)), h('span', { class: 'count' }, String(open)),
       id === null && h('span', { class: 'plan-hint' }, 'Kategorie wählen oder Zeile in eine Kategorie ziehen')));
     for (const t of items) el.append(taskRow(t, { handle: canDrag && !t.done, shop: id === null ? 'unassigned' : 'assigned' }));
   }
@@ -1083,10 +1174,8 @@ function shopPage(list) {
   }
   return h('div', {},
     h('div', { class: 'section' },
-      h('div', { class: 'section-header static' }, h('strong', {}, `${list.name} (${mine.filter((t) => !t.done).length})`)),
-      h('div', { class: 'toolbar' },
-        h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) }, state.selecting ? 'Auswahl beenden' : '☑ Auswählen'),
-        h('span', { style: 'flex:1' }), doneToggle()),
+      staticHeader(list.name, mine.filter((t) => !t.done).length, toolsButton()),
+      showTools() && h('div', { class: 'tools-panel' }, selectToggleButton(), h('span', { style: 'flex:1' }), doneToggle()),
       el),
     state.selecting && selectBar(visible.map((t) => t.id)));
 }
@@ -1160,29 +1249,29 @@ function homePage() {
   const pool = inbox ? inMain.filter(isTodayTask) : main ? inMain.filter((t) => !isTodayTask(t)) : state.tasks.filter((t) => listOf(t) === list.id);
   const openCount = pool.filter((t) => !t.done).length;
   const filtered = pool.filter((t) => !state.assignees.size || state.assignees.has(t.assignee));
-  const emptyText = pool.length ? 'Keine Tasks für diesen Filter.'
-    : inbox ? 'Für heute ist nichts dran.' : main ? 'Noch nichts geplant. Sortiere etwas aus der Inbox hierher.' : `„${list.name}“ ist noch leer. Tipp oben etwas ein!`;
-  const body = h('div', {},
-    h('div', { class: 'toolbar' },
-      h('button', { class: 'btn small', onclick: () => (state.selecting ? exitSelectMode() : (state.selecting = true, render())) },
-        state.selecting ? 'Auswahl beenden' : '☑ Auswählen'),
-      h('span', { style: 'flex:1' }),
-      h('label', {}, 'Sortierung '),
-      h('select', { onchange: (e) => {
-        state.sortByList[list.id] = e.target.value;
-        try { localStorage.setItem('haus-tasks-sorts', JSON.stringify(state.sortByList)); } catch { /* ohne Speicher eben ohne Merken */ }
-        render();
-      } }, Object.entries(SORTS).map(([k, s]) => h('option', { value: k, selected: k === currentSortKey() }, s.label))),
-      doneToggle()),
-    h('div', { class: 'filters' }, chipGroup('Wer', ASSIGNEES, state.assignees)),
-    taskList(filtered, emptyText));
+  const emptyText = pool.length ? ['Nichts gefunden', 'Für diesen Filter gibt es keine Tasks.']
+    : inbox ? ['Für heute ist nichts dran', 'Tippe oben etwas ein oder setze Tasks über „Heute“ auf heute.']
+    : main ? ['Noch nichts geplant', 'Sortiere Einträge aus der Inbox hierher oder tippe oben etwas ein.']
+    : [`„${list.name}“ ist noch leer`, 'Tippe oben etwas ein, um den ersten Eintrag zu machen.'];
+  const panel = showTools() && h('div', { class: 'tools-panel' },
+    selectToggleButton(),
+    h('span', { style: 'flex:1' }),
+    h('label', {}, 'Sortierung '),
+    h('select', { onchange: (e) => {
+      state.sortByList[list.id] = e.target.value;
+      try { localStorage.setItem('haus-tasks-sorts', JSON.stringify(state.sortByList)); } catch { /* ohne Speicher eben ohne Merken */ }
+      render();
+    } }, Object.entries(SORTS).map(([k, s]) => h('option', { value: k, selected: k === currentSortKey() }, s.label))),
+    doneToggle(),
+    h('div', { class: 'filters' }, chipGroup('Wer', ASSIGNEES, state.assignees)));
+  const body = h('div', {}, panel, taskList(filtered, emptyText));
   // In der Inbox ist „Heute“ ein ein-/ausklappbarer, leicht abgesetzter Abschnitt unter dem Unsortierten.
   const open = !inbox || state.todayOpen;
   return h('div', {},
     inbox && inboxSection(),
     h('div', { class: 'section' + (inbox ? ' today' : '') },
-      inbox ? sectionHeader('Heute', openCount, state.todayOpen, () => { state.todayOpen = !state.todayOpen; render(); })
-        : h('div', { class: 'section-header static' }, h('strong', {}, `${list.name} (${openCount})`)),
+      inbox ? sectionHeader('Heute', openCount, state.todayOpen, () => { state.todayOpen = !state.todayOpen; render(); }, toolsButton())
+        : staticHeader(list.name, openCount, toolsButton()),
       open && body),
     state.selecting && selectBar(open ? sorted(filtered).map((t) => t.id) : []));
 }
@@ -1284,7 +1373,8 @@ function paintTabs() {
     ...state.lists.map((l) => h('button', { class: 'tab list' + (l.id === cur.id ? ' on' : ''), 'data-id': l.id, style: `--c:${hex(l.color)}`, onclick: () => setList(l.id) },
       h('span', { class: 'dot-c' }), l.name)),
     h('button', { class: 'tab add', title: 'Neue Liste', onclick: () => openListForm(null) }, '＋'),
-    h('button', { class: 'tab edit', title: `Liste „${cur.name}“ bearbeiten`, onclick: () => openListForm(cur) }, '✎'));
+    h('button', { class: 'tab more', title: 'Liste bearbeiten, neue Liste, Einstellungen', 'aria-label': 'Mehr', onclick: (e) => { e.stopPropagation();
+      openActionMenu(e.currentTarget, [[`Liste „${cur.name}“ bearbeiten …`, () => openListForm(cur)], ['Neue Liste …', () => openListForm(null)], ['Einstellungen und Sync …', () => openSettings()]]); } }, iconEl('dots')));
   nav.querySelectorAll('.tab.list').forEach(enableTabDrag);
 }
 
@@ -1772,16 +1862,17 @@ function openForm(task) {
   //   Einkaufsliste: Titel, Zuständigkeit, Liste, Einkaufskategorie, Notizen          (kein Datum/Uhrzeit/Priorität/Wiederholung/Checkliste/Kalender)
   //   Speiseplan („Essen“): wie Tasks, aber ohne Uhrzeit/Priorität/Wiederholung/Kalender; dafür „Steht auf dem Plan“ und „An Einkaufsliste senden“
   //   alle anderen: alles außer Einkaufskategorie, „Steht auf dem Plan“ und „An Einkaufsliste senden“
-  const dateRow = h('div', { class: 'row2' }, field('Datum', h('div', { class: 'date-row' }, date, todayBtn)), timeField);
+  // Oben nur das Wichtigste (Titel, Datum, Liste, Zuständigkeit); Uhrzeit, Kalender, Wiederholung und Priorität unter „Mehr Optionen“
+  // (aufgeklappt, sobald etwas davon gesetzt ist).
+  const dateField = field('Datum', h('div', { class: 'date-row' }, date, todayBtn));
+  const dateRow = h('div', { class: 'row2' }, dateField, field('Liste', listSel));
+  const moreOpts = h('details', { class: 'more-opts', open: !!(t.due_time || t.recurrence || t.in_calendar || (t.priority && t.priority !== 'mittel')) },
+    h('summary', {}, 'Mehr Optionen', h('small', {}, 'Uhrzeit, Wiederholung, Kalender, Priorität')),
+    h('div', { class: 'row2' }, timeField, endField), calLabel, recField, recOpts, prioField);
   const syncKind = () => {
     const k = kindOf(listSel.value);
-    dateRow.hidden = k === 'shop';
-    timeField.hidden = k !== 'default';
-    endField.hidden = k !== 'default';
-    calLabel.hidden = k !== 'default';
-    recField.hidden = k !== 'default';
-    recOpts.hidden = k !== 'default';
-    prioField.hidden = k !== 'default';
+    dateField.hidden = k === 'shop';
+    moreOpts.hidden = k !== 'default';
     checkField.hidden = k === 'shop';
     if (chk.sendBtn) chk.sendBtn.hidden = k !== 'plan' || !shoppingList();
     planField.hidden = k !== 'plan';
@@ -1795,12 +1886,8 @@ function openForm(task) {
     syncInfo,
     field('Titel', title),
     dateRow,
-    endField,
-    calLabel,
-    recField,
-    recOpts,
     field('Zuständigkeit', who.el),
-    h('div', { class: 'row2' }, prioField, field('Liste', listSel)),
+    moreOpts,
     planField,
     shopField,
     sourceHint,
