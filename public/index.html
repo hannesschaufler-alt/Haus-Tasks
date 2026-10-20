@@ -265,7 +265,9 @@
   .chk-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
   .chk-actions .chk-add { margin-top: 0; }
   .chk-list li.chk-send { margin-top: 6px; }
-  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; z-index: 10; }
+  #toasts { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: grid; gap: 8px; justify-items: center; z-index: 40; width: max-content; max-width: calc(100vw - 24px); pointer-events: none; }
+  .toast { display: flex; align-items: center; gap: 12px; background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.25); pointer-events: auto; }
+  .toast-action { border: 0; background: none; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; padding: 0; }
   dialog { max-height: calc(100dvh - 24px); overflow-y: auto; }
   .wrap { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); padding-bottom: max(16px, env(safe-area-inset-bottom)); }
 
@@ -374,10 +376,14 @@ function diffPatch(original, body) {
   return patch;
 }
 
-function toast(msg) {
-  const t = h('div', { class: 'toast' }, msg);
-  document.body.append(t);
-  setTimeout(() => t.remove(), 3500);
+// Meldungen stapeln sich untereinander (statt übereinander zu liegen); `action` = Knopf in der Meldung (z. B. „Rückgängig“).
+function toast(msg, action) {
+  let box = document.getElementById('toasts');
+  if (!box) { box = h('div', { id: 'toasts' }); document.body.append(box); }
+  const t = h('div', { class: 'toast' }, h('span', {}, msg),
+    action && h('button', { type: 'button', class: 'toast-action', onclick: () => { t.remove(); action.onClick(); } }, action.label));
+  box.append(t);
+  setTimeout(() => t.remove(), action ? 7000 : 3500);
 }
 
 const hex = (id) => state.cfg.colors[id]?.hex || '#9e9e9e';
@@ -705,6 +711,7 @@ async function toggleDone(t, done) {
     await reload();
     kickSync();
     if (done && res && !res.done && t.planned) toast(`„${t.title}“ ist zurück im Katalog.`);
+    else if (done && res?.done && !t.recurrence) toast(`„${t.title}“ erledigt`, { label: 'Rückgängig', onClick: () => toggleDone(res, false) });
   } catch (e) { toast(e.message); reload(); }
 }
 
@@ -750,23 +757,25 @@ async function moveToLater(t) {
 
 // Einmalige Umstellung: der frühere Status „Später“ ist jetzt die Liste „Später“. Läuft nach jedem Laden/Sync, weil
 // ein noch nicht aktualisiertes Gerät weiterhin Tasks mit dem alten Status anlegen kann.
-// Einkaufsliste aufräumen: erledigte Einträge werden nach 7 Tagen gelöscht (Häkchen im ✎-Dialog der Einkaufsliste, Vorgabe: an).
+// Einkaufsliste aufräumen: erledigte Einträge werden nach einem Tag gelöscht. Bis dahin lassen sie sich über „Erledigte anzeigen“ oder
+// sofort über „Rückgängig“ in der Meldung nach dem Abhaken zurückholen.
 // Läuft nach dem Laden und nach jedem Sync; auf mehreren Geräten gleichzeitig ist es harmlos (Löschen eines schon gelöschten Termins
 // wird übergangen). Die zuletzt von Hand kategorisierten Einträge je Name bleiben als Gedächtnis liegen (siehe OfflineLogic.staleDoneIds).
+const SHOP_CLEAN_DAYS = 1;
 let cleaningShop = false;
 async function cleanupShoppingDone() {
   if (cleaningShop) return;
   const shop = shoppingList();
-  if (!shop || shop.cleanup === false) return;
+  if (!shop) return;
   cleaningShop = true;
   try {
     const mine = state.tasks.filter((t) => listOf(t) === shop.id);
-    const ids = OfflineLogic.staleDoneIds(mine, { normalize: ShopCategories.normalizeItem });
+    const ids = OfflineLogic.staleDoneIds(mine, { normalize: ShopCategories.normalizeItem, days: SHOP_CLEAN_DAYS });
     if (!ids.length) return;
     for (const id of ids) await Offline.mutate('task', 'delete', { id });
     await reload();
     kickSync();
-    toast(`${ids.length} erledigte${ids.length === 1 ? 'r Eintrag' : ' Einträge'} aus „${shop.name}“ aufgeräumt (älter als 7 Tage).`);
+    toast(`${ids.length} erledigte${ids.length === 1 ? 'r Eintrag' : ' Einträge'} aus „${shop.name}“ aufgeräumt.`);
   } catch (e) { /* beim nächsten Mal erneut */ } finally { cleaningShop = false; }
 }
 
@@ -1048,8 +1057,8 @@ async function commitPlanOrder(container, movedId) {
 function shopPage(list) {
   const SC = ShopCategories;
   const mine = state.tasks.filter((t) => listOf(t) === list.id);
-  const learned = SC.buildLearned(mine);
-  const visible = mine.filter((t) => state.showDone || !t.done).sort(manualCmp);
+  const learned = SC.buildLearned(mine); // inkl. der versteckten Gedächtnis-Einträge
+  const visible = mine.filter((t) => (state.showDone || !t.done) && !OfflineLogic.isShopMemory(t, { days: SHOP_CLEAN_DAYS })).sort(manualCmp);
   const groups = new Map([[null, []], ...SC.CATEGORIES.map((c) => [c.id, []])]);
   for (const t of visible) groups.get(SC.categoryOf(t, learned) ?? null).push(t);
   const canDrag = !state.selecting;
@@ -1393,11 +1402,7 @@ function openListForm(list) {
   const freeColor = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
   const picker = makeSwatches(list?.color || freeColor);
   const shopBox = h('input', { type: 'checkbox', id: 'optShop', checked: !!list && shoppingList()?.id === list.id });
-  const cleanBox = h('input', { type: 'checkbox', id: 'optClean', checked: list?.cleanup !== false });
-  const cleanField = h('label', { for: 'optClean', class: 'inline-check', style: 'color:var(--text)' }, cleanBox, h('span', {}, '🧹 Erledigte Einträge nach 7 Tagen automatisch löschen'));
-  const syncClean = () => { cleanField.hidden = !shopBox.checked; };
-  shopBox.addEventListener('change', syncClean);
-  syncClean();
+
   const planListBox = h('input', { type: 'checkbox', id: 'optPlanList', checked: OfflineLogic.isPlanList(list) });
   // Gespeichert wird der Haken nur, wenn er von der Namenserkennung (siehe isPlanList) abweicht – sonst gilt weiter der Name.
   // Bei einer neuen Liste folgt der Haken dem getippten Namen („Essen“ → an), bis man ihn selbst anfasst.
@@ -1410,7 +1415,7 @@ function openListForm(list) {
   });
   const withShopping = (lists, id) => lists.map((l) => {
     const { shopping, cleanup, ...rest } = l;
-    if (l.id === id) return shopBox.checked ? { ...rest, shopping: true, ...(cleanBox.checked ? {} : { cleanup: false }) } : rest;
+    if (l.id === id) return shopBox.checked ? { ...rest, shopping: true } : rest;
     return shopBox.checked ? rest : l; // nur eine Liste ist die Einkaufsliste
   });
   nameInput.addEventListener('input', () => { if (!planTouched) planListBox.checked = OfflineLogic.isPlanList({ name: nameInput.value }); });
@@ -1465,7 +1470,6 @@ function openListForm(list) {
     h('label', { for: 'optShop', class: 'inline-check', style: 'color:var(--text)' }, shopBox, h('span', {}, '🛒 Das ist meine Einkaufsliste')),
     h('label', { for: 'optPlanList', class: 'inline-check', style: 'color:var(--text)' }, planListBox, h('span', {}, '🍽 Speiseplan (oben „Diese Woche“, unten „Katalog“)')),
     h('div', { class: 'hint' }, 'Gerichte lassen sich per Ziehen oder mit ＋ auf den Plan setzen. Hakt man ein geplantes Gericht ab („gekocht“), geht es zurück in den Katalog, mit frischer Checkliste. Ohne ausdrückliche Wahl erkennt die App Listen wie „Essen“ oder „Speiseplan“ am Namen.'),
-    cleanField,
     h('div', { class: 'hint' }, 'Aus der Checkliste eines Tasks (z. B. den Zutaten eines Gerichts) lassen sich alle Punkte mit einem Klick auf diese Liste setzen. Ohne Markierung gilt die erste Liste mit „Einkauf“ im Namen.'),
     !isNew && h('div', { class: 'hint' }, 'Beim Umfärben ziehen die offenen Tasks der Liste mit.' + (main ? ' „Inbox“ und „Geplant“ gehören zur Grundausstattung und können nicht gelöscht werden.' : '')),
     err,

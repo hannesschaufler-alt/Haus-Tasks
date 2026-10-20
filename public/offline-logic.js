@@ -258,6 +258,13 @@
     return old.filter((t) => !keepIds.has(t.id)).map((t) => t.id);
   }
 
+  // „Gedächtnis“-Eintrag der Einkaufsliste: erledigt, mit von Hand gewählter Kategorie und älter als die Aufräum-Frist – bleibt nur liegen,
+  // damit die App die Zuordnung für diesen Namen behält (siehe staleDoneIds) und wird in der App nicht angezeigt.
+  function isShopMemory(t, { now = Date.now(), days = 1 } = {}) {
+    const stamp = Date.parse(t.done_at || t.updated_at || '');
+    return !!(t.done && t.shop_cat && Number.isFinite(stamp) && stamp < now - days * 864e5);
+  }
+
   // Zutaten einer Checkliste für die Einkaufsliste: Texte ohne Doppelte, ohne das, was dort schon offen steht
   // (Groß-/Kleinschreibung egal). `existing`: die Tasks der Einkaufsliste.
   function shoppingItems(checklist, existing) {
@@ -353,6 +360,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, staleDoneIds, cleanSources, isPlanList, parseRecipes, normalizePlacement, shoppingItems, computeOrderUpdates,
+    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, staleDoneIds, isShopMemory, cleanSources, isPlanList, parseRecipes, normalizePlacement, shoppingItems, computeOrderUpdates,
   };
 });

@@ -99,3 +99,15 @@ test('Einkaufsliste aufräumen: erledigte Einträge nach 7 Tagen weg; offene und
   assert.deepStrictEqual(L.staleDoneIds([], { now }), []);
   assert.deepStrictEqual(L.staleDoneIds(tasks, { now, days: 60 }), [], 'mit längerer Frist bleibt alles');
 });
+
+test('Gedächtnis-Einträge der Einkaufsliste (erledigt, manuelle Kategorie, älter als die Frist) gelten als versteckt', () => {
+  const now = Date.parse('2026-10-20T12:00:00Z');
+  const ago = (h) => new Date(now - h * 3600e3).toISOString();
+  assert.strictEqual(L.isShopMemory({ done: true, shop_cat: 'obst', done_at: ago(30) }, { now, days: 1 }), true);
+  assert.strictEqual(L.isShopMemory({ done: true, shop_cat: 'obst', done_at: ago(5) }, { now, days: 1 }), false, 'frisch erledigt: sichtbar und zurückholbar');
+  assert.strictEqual(L.isShopMemory({ done: true, shop_cat: null, done_at: ago(300) }, { now, days: 1 }), false, 'ohne manuelle Kategorie: kein Gedächtnis');
+  assert.strictEqual(L.isShopMemory({ done: false, shop_cat: 'obst', updated_at: ago(300) }, { now, days: 1 }), false, 'offen: nie versteckt');
+  // Frist 1 Tag: nach 24 Stunden wird gelöscht, außer dem Gedächtnis-Eintrag
+  const ids = L.staleDoneIds([{ id: 'a', title: 'Milch', done: true, done_at: ago(30) }, { id: 'b', title: 'Brot', done: true, done_at: ago(5) }], { now, days: 1 });
+  assert.deepStrictEqual(ids, ['a']);
+});
