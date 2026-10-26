@@ -58,6 +58,15 @@
     return recipes;
   }
 
+  // Was für eine Liste ist das, wenn nur ihre Tasks bekannt sind? Gerichte haben Checkliste, Anleitung oder stehen auf dem Plan – das
+  // zuerst prüfen, denn Rezepttitel („Reisschüssel mit Rindfaschiertem“) würden vom Einkaufs-Wörterbuch fast immer erkannt.
+  // `categorize`: Titel → Kategorie oder null (ShopCategories). Ergebnis: 'plan' | 'shopping' | 'plain'.
+  function guessListKind(tasks, categorize = () => null) {
+    if (tasks.some((t) => t.planned || (t.checklist || []).length >= 3 || (t.notes || '').length > 80)) return 'plan';
+    const recognized = tasks.filter((t) => t.shop_cat || categorize(t.title)).length;
+    return tasks.length >= 2 && recognized / tasks.length >= 0.6 ? 'shopping' : 'plain';
+  }
+
   function normalizePlacement(obj) {
     return obj && obj.list_id === INBOX_LIST ? { ...obj, list_id: MAIN_LIST, bucket: 'inbox' } : obj;
   }
@@ -360,6 +369,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, staleDoneIds, isShopMemory, cleanSources, isPlanList, parseRecipes, normalizePlacement, shoppingItems, computeOrderUpdates,
+    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, guessListKind, staleDoneIds, isShopMemory, cleanSources, isPlanList, parseRecipes, normalizePlacement, shoppingItems, computeOrderUpdates,
   };
 });

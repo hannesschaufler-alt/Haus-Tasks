@@ -1289,25 +1289,46 @@ const SPECIAL_LISTS = new Set([INBOX_LIST, MAIN_LIST, LATER_LIST]);
 const askedOrphans = new Set();
 function findOrphanLists() {
   const known = new Set(state.lists.map((l) => l.id));
+  const deleted = new Set(state.deletedLists || []);
   const groups = new Map();
   for (const t of state.tasks) {
-    if (!t.list_id || known.has(t.list_id) || t.list_id === INBOX_LIST || t.list_id === MAIN_LIST) continue;
+    if (!t.list_id || known.has(t.list_id) || deleted.has(t.list_id) || t.list_id === INBOX_LIST || t.list_id === MAIN_LIST) continue;
     if (!groups.has(t.list_id)) groups.set(t.list_id, []);
     groups.get(t.list_id).push(t);
   }
   return [...groups].map(([id, tasks]) => {
-    const recognized = tasks.filter((t) => ShopCategories.categorize(t.title) || t.shop_cat).length;
-    const looksShopping = tasks.length >= 2 && recognized / tasks.length >= 0.6;
-    const looksPlan = !looksShopping && tasks.some((t) => t.planned || (t.checklist || []).length >= 3 || (t.notes || '').length > 80);
-    return { id, tasks, guess: id === LATER_LIST ? 'Später' : looksShopping ? 'Einkaufsliste' : looksPlan ? 'Essen' : 'Liste', shopping: looksShopping, plan: looksPlan };
+    const kind = OfflineLogic.guessListKind(tasks, (title) => ShopCategories.categorize(title));
+    return { id, tasks, guess: id === LATER_LIST ? 'Später' : kind === 'plan' ? 'Essen' : kind === 'shopping' ? 'Einkaufsliste' : 'Liste', shopping: kind === 'shopping', plan: kind === 'plan' };
   });
 }
+async function applyRestoredList(restored, count) {
+  await Offline.setSettings({ lists: [...state.lists, restored] });
+  await refreshLists();
+  render();
+  syncNow(true);
+  toast(`Liste „${restored.name}“ mit ${count} Task${count === 1 ? '' : 's'} wiederhergestellt.`);
+  setTimeout(checkOrphanLists, 300); // gibt es noch eine weitere?
+}
+// Verlorene Liste: erst im Geräte-Archiv nachsehen (dort stehen Name, Farbe und Art aus der Zeit, als die Liste noch da war) und
+// still mit genau diesen Angaben zurückholen; nur wenn dieses Gerät sie nie gesehen hat, wird gefragt (mit Vorschlag).
 function checkOrphanLists() {
   if ($('#dlg').open) return; // nicht über ein geöffnetes Formular legen
   const orphan = findOrphanLists().find((o) => !askedOrphans.has(o.id));
   if (!orphan) return;
   askedOrphans.add(orphan.id);
-  const nameInput = h('input', { type: 'text', value: orphan.guess, required: true, maxLength: 30 });
+  Offline.getMeta('lists_archive').then(async (archive) => {
+    const archived = archive?.[orphan.id];
+    if (archived && archived.id === orphan.id && typeof archived.name === 'string' && archived.name) {
+      try { await applyRestoredList(archived, orphan.tasks.length); } catch { showOrphanDialog(orphan); }
+      return;
+    }
+    showOrphanDialog(orphan);
+  }).catch(() => showOrphanDialog(orphan));
+}
+function showOrphanDialog(orphan) {
+  if ($('#dlg').open) { askedOrphans.delete(orphan.id); return; }
+  const taken = (n) => state.lists.some((l) => l.name.toLowerCase() === n.toLowerCase());
+  const nameInput = h('input', { type: 'text', value: taken(orphan.guess) ? `${orphan.guess} (wiederhergestellt)` : orphan.guess, required: true, maxLength: 30 });
   const err = h('div', { class: 'error' });
   const form = $('#form');
   form.onsubmit = async (e) => {
@@ -1317,14 +1338,10 @@ function checkOrphanLists() {
     try {
       const used = new Set(state.lists.map((l) => l.color));
       const color = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
-      const restored = { id: orphan.id, name, color, ...(orphan.shopping ? { shopping: true } : {}), ...(orphan.plan && !OfflineLogic.isPlanList({ name }) ? { plan: true } : {}) };
-      await Offline.setSettings({ lists: [...state.lists, restored] });
-      await refreshLists();
+      // Es gibt nur eine Einkaufsliste: gibt es schon eine, wird diese nicht zusätzlich als solche markiert.
+      const restored = { id: orphan.id, name, color, ...(orphan.shopping && !shoppingList() ? { shopping: true } : {}), ...(orphan.plan && !OfflineLogic.isPlanList({ name }) ? { plan: true } : {}) };
       $('#dlg').close();
-      render();
-      syncNow(true);
-      toast(`Liste „${name}“ mit ${orphan.tasks.length} Task${orphan.tasks.length === 1 ? '' : 's'} wiederhergestellt.`);
-      setTimeout(checkOrphanLists, 300); // gibt es noch eine weitere?
+      await applyRestoredList(restored, orphan.tasks.length);
     } catch (ex) { err.textContent = ex.message; }
   };
   const titles = orphan.tasks.slice(0, 6).map((t) => t.title);
@@ -1332,7 +1349,7 @@ function checkOrphanLists() {
     h('h3', {}, 'Verlorene Liste gefunden'),
     h('div', { class: 'hint' }, `${orphan.tasks.length === 1 ? '1 Task gehört' : `${orphan.tasks.length} Tasks gehören`} zu einer Liste, die es nicht mehr gibt (aktuell werden sie in „Geplant“ angezeigt): ${titles.join(', ')}${orphan.tasks.length > titles.length ? ' …' : ''}`),
     h('div', { class: 'field' }, h('label', {}, 'Name der Liste'), nameInput),
-    h('div', { class: 'hint' }, orphan.shopping ? 'Das sieht nach der Einkaufsliste aus.' : orphan.plan ? 'Das sieht nach einer Liste mit Gerichten (Speiseplan) aus.' : 'Wähle einen passenden Namen.'),
+    h('div', { class: 'hint' }, orphan.plan ? 'Das sieht nach einer Liste mit Gerichten (Speiseplan) aus.' : orphan.shopping ? 'Das sieht nach der Einkaufsliste aus.' : 'Wähle einen passenden Namen.'),
     err,
     h('div', { class: 'actions' },
       h('span'),
@@ -1354,8 +1371,21 @@ const isTodayTask = (t) => !!t.due_date && (t.done ? t.due_date === todayStr() :
 const currentList = () => state.lists.find((l) => l.id === state.listId) || state.lists[0];
 
 async function refreshLists() {
-  state.lists = (await Offline.getSettings()).lists;
+  const st = await Offline.getSettings();
+  state.lists = st.lists;
+  state.deletedLists = st.deletedLists || [];
   if (!state.lists.some((l) => l.id === state.listId)) state.listId = INBOX_LIST;
+  archiveLists();
+}
+// Jedes Gerät merkt sich jede Liste, die es je gesehen hat (Name, Farbe, Art), damit eine verlorene Liste mit genau diesen Angaben
+// zurückkommt statt mit einem geratenen Namen (siehe checkOrphanLists).
+async function archiveLists() {
+  try {
+    const archive = (await Offline.getMeta('lists_archive')) || {};
+    let changed = false;
+    for (const l of state.lists) if (JSON.stringify(archive[l.id]) !== JSON.stringify(l)) { archive[l.id] = l; changed = true; }
+    if (changed) await Offline.setMeta('lists_archive', archive);
+  } catch { /* nur eine Absicherung */ }
 }
 
 function setList(id) {
@@ -1512,8 +1542,8 @@ function openListForm(list) {
   const err = h('div', { class: 'error' });
   const form = $('#form');
 
-  const save = async (lists) => {
-    await Offline.setSettings({ lists });
+  const save = async (lists, extra = {}) => {
+    await Offline.setSettings({ lists, ...extra });
     await refreshLists();
     $('#dlg').close();
     render();
@@ -1547,7 +1577,8 @@ function openListForm(list) {
     if (!confirm(`Liste „${list.name}“ löschen?${mine.length ? ` Die ${mine.length} Task${mine.length === 1 ? '' : 's'} darin werden ebenfalls gelöscht (auch die Kalendereinträge in Google).` : ''}`)) return;
     try {
       for (const t of mine) await Offline.mutate('task', 'delete', { id: t.id });
-      await save(state.lists.filter((l) => l.id !== list.id));
+      const tomb = ((await Offline.getSettings()).deletedLists || []).concat(list.id); // Grabstein: die Liste wird beim Zusammenführen nicht wiederbelebt
+      await save(state.lists.filter((l) => l.id !== list.id), { deletedLists: tomb.slice(-40) });
       await reload();
       kickSync();
     } catch (ex) { err.textContent = ex.message; }
@@ -2142,7 +2173,7 @@ async function boot() {
   let cfg = await Offline.getConfig();
   if (!cfg) {
     // Ganz neuer, leerer Kalender: Konfiguration anlegen, damit beim nächsten Sync alle Geräte dieselbe haben.
-    cfg = { categories: {}, locations: [], updated_at: new Date().toISOString() };
+    cfg = SyncCore.emptyConfig(); // ohne „neu“-Markierung, damit sie Googles Konfiguration nie überschreibt (siehe emptyConfig)
     await Offline.saveConfig(cfg);
   }
   state.cfg = { categories: cfg.categories, locations: cfg.locations, priorities: PRIORITIES, colors: COLORS };

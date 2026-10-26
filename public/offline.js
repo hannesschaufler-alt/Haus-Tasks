@@ -154,7 +154,7 @@
   async function setSettings(patch) {
     const cfg = await configOrEmpty();
     const settings = { ...(cfg.settings || {}), ...patch };
-    await saveConfig({ ...cfg, settings, updated_at: new Date().toISOString() });
+    await saveConfig({ ...cfg, settings, updated_at: new Date().toISOString(), dirty: true });
     return root.SyncCore.resolveSettings(settings);
   }
 
@@ -230,7 +230,7 @@
       const current = cfg[listKey] || (kind === 'category' ? {} : []);
       const fns = kind === 'category' ? { update: L.updateCategory, del: L.deleteCategory } : { update: L.updateLocation, del: L.deleteLocation };
       const touch = async (patchToConfig) => {
-        const next = { ...cfg, ...patchToConfig, updated_at: new Date().toISOString() };
+        const next = { ...cfg, ...patchToConfig, updated_at: new Date().toISOString(), dirty: true };
         await saveConfig(next);
         return next;
       };
@@ -302,5 +302,7 @@
     getRawTasks,
     getOutbox,
     getConfigEvents: () => remote.readConfigs(),
+    getMeta,
+    setMeta,
   };
 })(typeof window !== 'undefined' ? window : this);

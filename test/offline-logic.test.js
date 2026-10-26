@@ -352,3 +352,14 @@ test('Speiseplan: ein „gekochtes“ Gericht geht zurück in den Katalog (nicht
   const re = L.setDone([old], dish.id, false, { planListIds: ['essen'] });
   assert.deepStrictEqual([re.task.done, re.task.planned], [false, false]);
 });
+
+test('Art einer verlorenen Liste erraten: Rezepte (Checkliste/Anleitung/Plan) zuerst, dann Einkäufe, sonst normal', () => {
+  const erkannt = (t) => (/milch|brot|reis|rind/i.test(t) ? 'x' : null);
+  const rezepte = [{ title: 'Reisschüssel mit Rindfaschiertem', checklist: [{ text: 'a' }, { text: 'b' }, { text: 'c' }] }, { title: 'Brot backen', notes: 'x'.repeat(100) }];
+  assert.strictEqual(L.guessListKind(rezepte, erkannt), 'plan', 'Rezepttitel werden vom Wörterbuch erkannt, sind aber keine Einkäufe');
+  const einkauf = [{ title: 'Milch' }, { title: 'Brot' }, { title: 'Dings vom Markt' }];
+  assert.strictEqual(L.guessListKind(einkauf, erkannt), 'shopping');
+  assert.strictEqual(L.guessListKind([{ title: 'Steckdose' }, { title: 'Lampe' }], erkannt), 'plain');
+  assert.strictEqual(L.guessListKind([{ title: 'Milch' }], erkannt), 'plain', 'ein einzelner Eintrag reicht nicht');
+  assert.strictEqual(L.guessListKind([{ title: 'x', planned: true }], erkannt), 'plan');
+});

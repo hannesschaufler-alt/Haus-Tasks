@@ -565,7 +565,7 @@ test('Abgelaufenes syncToken (410) löst einen vollständigen Abgleich aus', asy
 // Wie Offline.setSettings() im Browser: Einstellung ändern und die Konfiguration als „neuer“ markieren.
 async function setSetting(store, patch) {
   const cfg = (await store.getConfig()) || { categories: {}, locations: [] };
-  await store.saveConfig({ ...cfg, settings: { ...cfg.settings, ...patch }, updated_at: new Date(Date.now() + 60000).toISOString() });
+  await store.saveConfig({ ...cfg, settings: { ...cfg.settings, ...patch }, updated_at: new Date(Date.now() + 60000).toISOString(), dirty: true });
 }
 
 test('Standard: Task mit Datum ohne Uhrzeit wird als 25-Minuten-Termin 23:34–23:59 (Platz 0) angelegt, ohne Erinnerung, in der App weiter ohne Uhrzeit', async () => {
@@ -1183,4 +1183,114 @@ test('Nicht lesbare Konfiguration in Google ersetzt nie die lokalen Listen – s
   assert.strictEqual(written.id, 'cfg-kaputt', 'der kaputte Termin wird überschrieben');
   assert.ok((await store.getConfig()).settings.lists.some((l) => l.id === 'essen'), 'lokale Listen bleiben erhalten');
   remote.readConfig = realRead;
+});
+
+// --- Gemeinsame Konfiguration (Listen) geht nie durch ein leeres oder veraltetes Gerät verloren ---
+const L3 = (...names) => names.map((n) => ({ id: n.toLowerCase(), name: n, color: '9' }));
+const listNames = async (store) => S.resolveSettings((await store.getConfig()).settings).lists.map((l) => l.name);
+
+test('Ein frisch eingerichtetes Gerät (leere Konfiguration) überschreibt die gemeinsamen Listen nicht', async () => {
+  const a = fakeStore({ lists: L3('Tasks', 'Essen', 'Einkauf') });
+  await S.syncWith(a, remote); // Gerät A legt die Konfiguration an
+  const b = fakeStore();
+  await b.saveConfig(S.emptyConfig()); // wie beim ersten Start in index.html (neuer Browser, gelöschte Website-Daten …)
+  await S.syncWith(b, remote);
+  assert.deepStrictEqual(await listNames(b), ['Inbox', 'Tasks', 'Essen', 'Einkauf'], 'B übernimmt Googles Stand');
+  await S.syncWith(a, remote);
+  assert.deepStrictEqual(await listNames(a), ['Inbox', 'Tasks', 'Essen', 'Einkauf'], 'und A hat nichts verloren');
+});
+
+test('emptyConfig hat weder Änderungszeit noch „geändert“-Markierung (früher: „jetzt“, dadurch neuer als Google)', async () => {
+  const cfg = S.emptyConfig();
+  assert.strictEqual(cfg.updated_at, null);
+  assert.strictEqual(cfg.dirty, false);
+  const a = fakeStore({ lists: L3('Tasks', 'Essen') });
+  await S.syncWith(a, remote);
+  const b = fakeStore();
+  await b.saveConfig(cfg);
+  await S.syncWith(b, remote);
+  assert.ok((await b.getConfig()).settings.lists.some((l) => l.name === 'Essen'));
+});
+
+test('Erste Änderung vor dem ersten Sync (z. B. Einstellung beim Start): wird mit Googles Listen zusammengeführt statt sie zu ersetzen', async () => {
+  const a = fakeStore({ lists: L3('Tasks', 'Essen', 'Einkauf') });
+  await S.syncWith(a, remote);
+  const b = fakeStore();
+  await b.saveConfig(S.emptyConfig());
+  await setSetting(b, { laterMigrated: true, lists: L3('Später') }); // lokale Änderung auf Basis „nichts“
+  await S.syncWith(b, remote);
+  assert.deepStrictEqual((await listNames(b)).sort(), ['Einkauf', 'Essen', 'Inbox', 'Später', 'Tasks']);
+  await S.syncWith(a, remote);
+  assert.deepStrictEqual((await listNames(a)).sort(), ['Einkauf', 'Essen', 'Inbox', 'Später', 'Tasks']);
+});
+
+test('Zwei Geräte legen gleichzeitig je eine Liste an: danach haben beide beide', async () => {
+  const a = fakeStore({ lists: L3('Tasks') });
+  await S.syncWith(a, remote);
+  const b = fakeStore();
+  await b.saveConfig(S.emptyConfig());
+  await S.syncWith(b, remote);
+  await setSetting(a, { lists: L3('Tasks', 'Essen') });
+  await setSetting(b, { lists: L3('Tasks', 'Einkauf') });
+  await S.syncWith(a, remote);
+  await S.syncWith(b, remote);
+  await S.syncWith(a, remote);
+  assert.deepStrictEqual((await listNames(a)).sort(), ['Einkauf', 'Essen', 'Inbox', 'Tasks']);
+  assert.deepStrictEqual((await listNames(b)).sort(), ['Einkauf', 'Essen', 'Inbox', 'Tasks']);
+});
+
+test('Gelöschte Liste bleibt gelöscht (Grabstein), auch wenn ein veraltetes Gerät sie noch hat', async () => {
+  const a = fakeStore({ lists: L3('Tasks', 'Essen', 'Einkauf') });
+  await S.syncWith(a, remote);
+  const b = fakeStore();
+  await b.saveConfig(S.emptyConfig());
+  await S.syncWith(b, remote); // B kennt jetzt alle drei
+  await setSetting(a, { lists: L3('Tasks', 'Essen'), deletedLists: ['einkauf'] }); // A löscht „Einkauf“
+  await S.syncWith(a, remote);
+  await setSetting(b, { lists: L3('Tasks', 'Essen', 'Einkauf', 'Neu') }); // B ist veraltet und ändert etwas anderes
+  await S.syncWith(b, remote);
+  await S.syncWith(a, remote);
+  assert.deepStrictEqual((await listNames(a)).sort(), ['Essen', 'Inbox', 'Neu', 'Tasks']);
+  assert.deepStrictEqual((await listNames(b)).sort(), ['Essen', 'Inbox', 'Neu', 'Tasks']);
+});
+
+test('Ältere Installation ohne dirty/base_updated: ein schon synchronisierter Stand gilt nicht als „geändert“', async () => {
+  const a = fakeStore({ lists: L3('Tasks', 'Essen') });
+  await S.syncWith(a, remote);
+  const legacy = fakeStore();
+  const cfg = await a.getConfig();
+  await legacy.saveConfig({ categories: cfg.categories, locations: cfg.locations, settings: cfg.settings, updated_at: cfg.updated_at }); // wie vor dieser Version gespeichert
+  await setSetting(a, { lists: L3('Tasks', 'Essen', 'Neu') });
+  await S.syncWith(a, remote);
+  await S.syncWith(legacy, remote);
+  assert.ok((await legacy.getConfig()).settings.lists.some((l) => l.name === 'Neu'), 'der Stand von Google wird übernommen, nicht mit dem alten überschrieben');
+});
+
+test('Scheitert das Senden der Konfiguration, bleibt die Änderung lokal erhalten und geht beim nächsten Sync durch', async () => {
+  const a = fakeStore({ lists: L3('Tasks') });
+  await S.syncWith(a, remote);
+  await setSetting(a, { lists: L3('Tasks', 'Essen') });
+  const realWrite = remote.writeConfig.bind(remote);
+  remote.writeConfig = async () => { throw Object.assign(new Error('Netz weg'), { status: 503 }); };
+  await S.syncWith(a, remote); // syncWith fängt Fehler der Konfiguration ab
+  assert.ok((await listNames(a)).includes('Essen'), 'lokal noch da');
+  assert.strictEqual((await a.getConfig()).dirty, true);
+  remote.writeConfig = realWrite;
+  await S.syncWith(a, remote);
+  const b = fakeStore();
+  await b.saveConfig(S.emptyConfig());
+  await S.syncWith(b, remote);
+  assert.ok((await listNames(b)).includes('Essen'));
+});
+
+test('mergeConfigs: Vereinigung nach ID, lokale Fassung gewinnt, Grabsteine verhindern die Wiederbelebung', () => {
+  const m = S.mergeConfigs(
+    { categories: { A: '1' }, locations: ['X'], settings: { lists: [{ id: 'a', name: 'Lokal A' }, { id: 'c', name: 'C' }], flag: 1 } },
+    { categories: { B: '2' }, locations: ['Y'], settings: { lists: [{ id: 'a', name: 'Remote A' }, { id: 'b', name: 'B' }, { id: 'gone', name: 'Weg' }], flag: 0, other: true, deletedLists: ['gone'] } });
+  assert.deepStrictEqual(m.settings.lists.map((l) => l.name), ['Lokal A', 'C', 'B']);
+  assert.strictEqual(m.settings.flag, 1);
+  assert.strictEqual(m.settings.other, true);
+  assert.deepStrictEqual(m.settings.deletedLists, ['gone']);
+  assert.deepStrictEqual(m.categories, { B: '2', A: '1' });
+  assert.deepStrictEqual(m.locations.sort(), ['X', 'Y']);
 });

@@ -578,26 +578,71 @@
     return { sent, failed, clashes, aborted: false };
   }
 
-  // Kategorien/Orte liegen als kleiner, versteckter Termin auf dem geteilten Kalender, damit sie ohne
-  // eigenen Server zwischen allen Installationen mitwandern. Änderungen sind selten, „neuer gewinnt“
-  // reicht hier als Konfliktregel völlig aus.
+  // Leere Konfiguration für ein Gerät, das noch nie synchronisiert hat. Bewusst OHNE Änderungszeit und ohne „geändert“-Markierung:
+  // früher bekam sie die aktuelle Zeit und galt damit als „neuer als Google“ – ein frisch eingerichtetes Gerät (neuer Browser,
+  // gelöschte Website-Daten, neu installierte App) hat dadurch die gemeinsame Konfiguration inklusive aller Listen mit einer leeren
+  // überschrieben.
+  const emptyConfig = () => ({ categories: {}, locations: [], settings: {}, updated_at: null, base_updated: null, dirty: false });
+
+  // Führt zwei Konfigurationen zusammen, statt eine zu überschreiben. Listen werden nach ID vereinigt (die lokale Fassung gewinnt bei
+  // gleicher ID, die lokale Reihenfolge vorn); gelöschte Listen stehen als Grabstein (settings.deletedLists) in beiden und werden nicht
+  // wiederbelebt. Übrige Einstellungen: die lokale (geänderte) Seite gewinnt, sonst gilt Googles Stand.
+  function mergeConfigs(local, remote) {
+    const ls = local.settings || {};
+    const rs = remote.settings || {};
+    const deleted = [...new Set([...(rs.deletedLists || []), ...(ls.deletedLists || [])])].slice(-40);
+    const lists = [];
+    const seen = new Set();
+    for (const l of [...(ls.lists || []), ...(rs.lists || [])]) {
+      if (!l || typeof l.id !== 'string' || seen.has(l.id) || deleted.includes(l.id)) continue;
+      seen.add(l.id);
+      lists.push(l);
+    }
+    const settings = { ...rs, ...ls, lists };
+    if (deleted.length) settings.deletedLists = deleted;
+    return {
+      categories: { ...(remote.categories || {}), ...(local.categories || {}) },
+      locations: [...new Set([...(remote.locations || []), ...(local.locations || [])])],
+      settings,
+    };
+  }
+
+  // Kategorien/Orte/Listen/Einstellungen liegen als kleiner, versteckter Termin auf dem geteilten Kalender, damit sie ohne eigenen
+  // Server zwischen allen Installationen mitwandern. Lokale Änderungen sind mit `dirty` markiert, `base_updated` ist der Stand von
+  // Google, auf dem die lokale Fassung beruht. Hat sich Google seitdem geändert (anderes Gerät), wird zusammengeführt; nie mehr
+  // „neuer gewinnt“ über Zeitstempel verschiedener Uhren.
   async function syncConfig(store, remote) {
     const local = await store.getConfig();
     const remoteCfg = await remote.readConfig();
-    if (!remoteCfg && local) {
-      await remote.writeConfig(null, local);
+    if (!remoteCfg) {
+      if (!local) return;
+      const w = await remote.writeConfig(null, local);
+      await store.saveConfig({ ...local, dirty: false, base_updated: w?.updated ?? null });
       return;
     }
-    if (!remoteCfg) return;
     if (remoteCfg.invalid) { // nicht lesbar: nicht als „keine Einstellungen“ übernehmen, sondern mit dem lokalen Stand reparieren
       if (local) await remote.writeConfig(remoteCfg.id, local);
       return;
     }
-    const localNewer = local?.updated_at && remoteCfg.updated && local.updated_at > remoteCfg.updated;
-    if (localNewer) {
-      await remote.writeConfig(remoteCfg.id, local);
-    } else {
-      await store.saveConfig({ categories: remoteCfg.categories, locations: remoteCfg.locations, settings: remoteCfg.settings || {}, updated_at: remoteCfg.updated });
+    const adopt = () => store.saveConfig({ categories: remoteCfg.categories, locations: remoteCfg.locations, settings: remoteCfg.settings || {}, updated_at: remoteCfg.updated, base_updated: remoteCfg.updated, dirty: false });
+    if (!local) { await adopt(); return; }
+    // Ältere Installationen kennen `dirty`/`base_updated` noch nicht: dort gilt „Änderungszeit nach Googles Stand“ als geändert.
+    const base = local.base_updated ?? local.updated_at ?? null;
+    const dirty = local.dirty ?? !!(local.updated_at && local.updated_at > remoteCfg.updated);
+    const remoteChanged = remoteCfg.updated !== base;
+    if (!dirty) {
+      if (remoteChanged || local.base_updated === undefined) await adopt();
+      return;
+    }
+    const merged = remoteChanged ? mergeConfigs(local, remoteCfg) : { categories: local.categories, locations: local.locations, settings: local.settings };
+    try {
+      const w = await remote.writeConfig(remoteCfg.id, merged);
+      const stamp = w?.updated ?? remoteCfg.updated;
+      await store.saveConfig({ ...merged, updated_at: stamp, base_updated: stamp, dirty: false });
+    } catch (e) {
+      // Senden hat nicht geklappt: das Zusammengeführte bleibt lokal (weiter „geändert“), beim nächsten Sync neuer Versuch.
+      await store.saveConfig({ ...merged, updated_at: local.updated_at, base_updated: remoteCfg.updated, dirty: true });
+      throw e;
     }
   }
 
@@ -704,5 +749,5 @@
     return { pulled, pushed: sent.length, failed, clashes, aborted, abortReason, slotsUpdated, calUpdated };
   }
 
-  return { syncWith, pull, push, syncConfig, reconcileTimeSlots, reconcileCalendar, hiddenDateFor, eventBody, taskShapeFromEvent, usesTimeSlot, withSlotIndex, slotTimes, resolveSettings, DEFAULT_SETTINGS, isHiddenDate, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
+  return { syncWith, pull, push, syncConfig, mergeConfigs, emptyConfig, reconcileTimeSlots, reconcileCalendar, hiddenDateFor, eventBody, taskShapeFromEvent, usesTimeSlot, withSlotIndex, slotTimes, resolveSettings, DEFAULT_SETTINGS, isHiddenDate, CONFIG_MARKER, DONE_PREFIX, DONE_COLOR, NO_DATE_PLACEHOLDER };
 });
