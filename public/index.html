@@ -1301,8 +1301,9 @@ function findOrphanLists() {
     return { id, tasks, guess: id === LATER_LIST ? 'Später' : kind === 'plan' ? 'Essen' : kind === 'shopping' ? 'Einkaufsliste' : 'Liste', shopping: kind === 'shopping', plan: kind === 'plan' };
   });
 }
-async function applyRestoredList(restored, count) {
-  await Offline.setSettings({ lists: [...state.lists, restored] });
+async function applyRestoredList(restored, count, kind) {
+  // Mit `kind` (Auswahl im Dialog) wird die Art gesetzt; aus dem Archiv kommt die Liste mit ihren früheren Angaben zurück.
+  await Offline.setSettings({ lists: kind ? applyListKind([...state.lists, restored], restored.id, kind) : [...state.lists, restored] });
   await refreshLists();
   render();
   syncNow(true);
@@ -1331,6 +1332,8 @@ function showOrphanDialog(orphan) {
   const nameInput = h('input', { type: 'text', value: taken(orphan.guess) ? `${orphan.guess} (wiederhergestellt)` : orphan.guess, required: true, maxLength: 30 });
   const err = h('div', { class: 'error' });
   const form = $('#form');
+  const guessKind = orphan.plan ? 'plan' : orphan.shopping && !shoppingList() ? 'shopping' : 'plain'; // es gibt nur eine Einkaufsliste
+  const kindSel = kindSelect(guessKind);
   form.onsubmit = async (e) => {
     e.preventDefault();
     const name = nameInput.value.trim();
@@ -1338,10 +1341,8 @@ function showOrphanDialog(orphan) {
     try {
       const used = new Set(state.lists.map((l) => l.color));
       const color = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
-      // Es gibt nur eine Einkaufsliste: gibt es schon eine, wird diese nicht zusätzlich als solche markiert.
-      const restored = { id: orphan.id, name, color, ...(orphan.shopping && !shoppingList() ? { shopping: true } : {}), ...(orphan.plan && !OfflineLogic.isPlanList({ name }) ? { plan: true } : {}) };
       $('#dlg').close();
-      await applyRestoredList(restored, orphan.tasks.length);
+      await applyRestoredList({ id: orphan.id, name, color }, orphan.tasks.length, kindSel.value);
     } catch (ex) { err.textContent = ex.message; }
   };
   const titles = orphan.tasks.slice(0, 6).map((t) => t.title);
@@ -1349,7 +1350,8 @@ function showOrphanDialog(orphan) {
     h('h3', {}, 'Verlorene Liste gefunden'),
     h('div', { class: 'hint' }, `${orphan.tasks.length === 1 ? '1 Task gehört' : `${orphan.tasks.length} Tasks gehören`} zu einer Liste, die es nicht mehr gibt (aktuell werden sie in „Geplant“ angezeigt): ${titles.join(', ')}${orphan.tasks.length > titles.length ? ' …' : ''}`),
     h('div', { class: 'field' }, h('label', {}, 'Name der Liste'), nameInput),
-    h('div', { class: 'hint' }, orphan.plan ? 'Das sieht nach einer Liste mit Gerichten (Speiseplan) aus.' : orphan.shopping ? 'Das sieht nach der Einkaufsliste aus.' : 'Wähle einen passenden Namen.'),
+    h('div', { class: 'field' }, h('label', {}, 'Art der Liste'), kindSel),
+    h('div', { class: 'hint' }, orphan.plan ? 'Das sieht nach einer Liste mit Gerichten (Speiseplan) aus.' : orphan.shopping ? 'Das sieht nach der Einkaufsliste aus.' : 'Wähle Name und Art passend aus.'),
     err,
     h('div', { class: 'actions' },
       h('span'),
@@ -1512,6 +1514,26 @@ function enableTabDrag(tab) {
   });
 }
 
+// „Art der Liste“: eine Auswahl statt zweier Haken – normale Liste, Einkaufsliste (Kategorien) oder Speiseplan (Diese Woche / Katalog).
+// Die Art wird ausdrücklich gespeichert (`shopping: true` bzw. `plan: true/false`), damit der Name („Einkaufsliste“, „Essen“) sie nicht
+// gegen den Willen bestimmt.
+const LIST_KINDS = [['plain', 'Normale Liste'], ['shopping', '🛒 Einkaufsliste (Kategorien, Zutaten aus Rezepten)'], ['plan', '🍽 Speiseplan (Diese Woche / Katalog)']];
+const kindOfList = (l) => (l && shoppingList()?.id === l.id ? 'shopping' : OfflineLogic.isPlanList(l) ? 'plan' : 'plain');
+const kindFromName = (name) => (/einkauf/i.test(name) ? 'shopping' : OfflineLogic.isPlanList({ name }) ? 'plan' : 'plain');
+function listWithKind(l, kind) {
+  const { shopping, plan, cleanup, ...rest } = l;
+  return { ...rest, ...(kind === 'shopping' ? { shopping: true, plan: false } : { plan: kind === 'plan' }) };
+}
+// Setzt die Art einer Liste; es gibt nur eine Einkaufsliste, bei den anderen fällt die Markierung weg.
+function applyListKind(lists, id, kind) {
+  return lists.map((l) => {
+    if (l.id === id) return listWithKind(l, kind);
+    if (kind === 'shopping' && l.shopping) { const { shopping, ...rest } = l; return rest; }
+    return l;
+  });
+}
+const kindSelect = (initial) => h('select', {}, LIST_KINDS.map(([v, label]) => h('option', { value: v, selected: v === initial }, label)));
+
 // Anlegen / Umbenennen / Umfärben / Löschen einer Liste. Die Farbe bekommen neue Tasks der Liste (und damit ihre
 // Termine in Google); beim Umfärben ziehen die bestehenden Tasks mit.
 function openListForm(list) {
@@ -1521,24 +1543,11 @@ function openListForm(list) {
   const used = new Set(state.lists.map((l) => l.color));
   const freeColor = Object.keys(state.cfg.colors).find((id) => id !== '8' && !used.has(id)) || '9';
   const picker = makeSwatches(list?.color || freeColor);
-  const shopBox = h('input', { type: 'checkbox', id: 'optShop', checked: !!list && shoppingList()?.id === list.id });
-
-  const planListBox = h('input', { type: 'checkbox', id: 'optPlanList', checked: OfflineLogic.isPlanList(list) });
-  // Gespeichert wird der Haken nur, wenn er von der Namenserkennung (siehe isPlanList) abweicht – sonst gilt weiter der Name.
-  // Bei einer neuen Liste folgt der Haken dem getippten Namen („Essen“ → an), bis man ihn selbst anfasst.
-  let planTouched = !!list;
-  planListBox.addEventListener('change', () => { planTouched = true; });
-  const withPlan = (lists, id) => lists.map((l) => {
-    if (l.id !== id) return l;
-    const { plan, ...rest } = l;
-    return planListBox.checked === OfflineLogic.isPlanList(rest) ? rest : { ...rest, plan: planListBox.checked };
-  });
-  const withShopping = (lists, id) => lists.map((l) => {
-    const { shopping, cleanup, ...rest } = l;
-    if (l.id === id) return shopBox.checked ? { ...rest, shopping: true } : rest;
-    return shopBox.checked ? rest : l; // nur eine Liste ist die Einkaufsliste
-  });
-  nameInput.addEventListener('input', () => { if (!planTouched) planListBox.checked = OfflineLogic.isPlanList({ name: nameInput.value }); });
+  // Art der Liste; bei einer neuen Liste folgt die Auswahl dem getippten Namen („Essen“ → Speiseplan), bis man sie selbst anfasst.
+  const kindSel = kindSelect(isNew ? 'plain' : kindOfList(list));
+  let kindTouched = !isNew;
+  kindSel.addEventListener('change', () => { kindTouched = true; });
+  nameInput.addEventListener('input', () => { if (!kindTouched) kindSel.value = kindFromName(nameInput.value); });
   const err = h('div', { class: 'error' });
   const form = $('#form');
 
@@ -1558,11 +1567,11 @@ function openListForm(list) {
     try {
       if (isNew) {
         const created = { id: Math.random().toString(36).slice(2, 8), name, color: picker.get() };
-        await save(withPlan(withShopping([...state.lists, created], created.id), created.id));
+        await save(applyListKind([...state.lists, created], created.id, kindSel.value));
         setList(created.id);
       } else {
         const colorChanged = picker.get() !== list.color;
-        await save(withPlan(withShopping(state.lists.map((l) => (l.id === list.id ? { ...l, name, color: picker.get() } : l)), list.id), list.id));
+        await save(applyListKind(state.lists.map((l) => (l.id === list.id ? { ...l, name, color: picker.get() } : l)), list.id, kindSel.value));
         if (colorChanged) {
           for (const t of state.tasks.filter((x) => listOf(x) === list.id && !x.done)) await Offline.mutate('task', 'update', { id: t.id, patch: { color: picker.get() } });
           await reload();
@@ -1588,10 +1597,8 @@ function openListForm(list) {
     h('h3', {}, isNew ? 'Neue Liste' : 'Liste bearbeiten'),
     h('div', { class: 'field' }, h('label', {}, 'Name'), nameInput),
     h('div', { class: 'field' }, h('label', {}, 'Farbe (so erscheinen die Tasks im Google-Kalender)'), picker.el),
-    h('label', { for: 'optShop', class: 'inline-check', style: 'color:var(--text)' }, shopBox, h('span', {}, '🛒 Das ist meine Einkaufsliste')),
-    h('label', { for: 'optPlanList', class: 'inline-check', style: 'color:var(--text)' }, planListBox, h('span', {}, '🍽 Speiseplan (oben „Diese Woche“, unten „Katalog“)')),
-    h('div', { class: 'hint' }, 'Gerichte lassen sich per Ziehen oder mit ＋ auf den Plan setzen. Hakt man ein geplantes Gericht ab („gekocht“), geht es zurück in den Katalog, mit frischer Checkliste. Ohne ausdrückliche Wahl erkennt die App Listen wie „Essen“ oder „Speiseplan“ am Namen.'),
-    h('div', { class: 'hint' }, 'Aus der Checkliste eines Tasks (z. B. den Zutaten eines Gerichts) lassen sich alle Punkte mit einem Klick auf diese Liste setzen. Ohne Markierung gilt die erste Liste mit „Einkauf“ im Namen.'),
+    h('div', { class: 'field' }, h('label', {}, 'Art der Liste'), kindSel),
+    h('div', { class: 'hint' }, 'Einkaufsliste: Einträge nach Supermarkt-Kategorien, Zutaten aus Rezepten per Knopf. Speiseplan: oben „Diese Woche“, unten „Katalog“; Abhaken heißt „gekocht“ und schickt das Gericht zurück in den Katalog. Normale Liste: wie „Geplant“.'),
     !isNew && h('div', { class: 'hint' }, 'Beim Umfärben ziehen die offenen Tasks der Liste mit.' + (main ? ' „Inbox“ und „Geplant“ gehören zur Grundausstattung und können nicht gelöscht werden.' : '')),
     err,
     h('div', { class: 'actions' },
