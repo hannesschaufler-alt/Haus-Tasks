@@ -211,6 +211,7 @@
           list: t.list_id || MAIN_LIST, // Liste (siehe resolveSettings)
           order: Number.isFinite(t.order) ? String(t.order) : '', // Position bei manueller Sortierung
           week: t.planned ? 'true' : '', // Speiseplan: steht auf dem Plan „Diese Woche“
+          dcat: t.dish_cat || '', // Gericht: Kategorie im Katalog
           src: sourcesJson(t.sources), // Einkaufsliste: Herkunft (Rezept-Titel) als JSON-Liste
           scat: t.shop_cat || '', // Einkaufsliste: manuell gewählte Kategorie (siehe shop-categories.js)
         },
@@ -296,7 +297,7 @@
         time_slot: false, slot_index: null, done, color,
         category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
         notes: joinChunks(p, 'notes', NOTES_CHUNKS), checklist, recurrence, series_id: p.series_id || null,
-        bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST, order: parseOrder(p.order), planned: p.week === 'true', shop_cat: p.scat || null, sources: parseSources(p.src),
+        bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST, order: parseOrder(p.order), planned: p.week === 'true', dish_cat: p.dcat || null, shop_cat: p.scat || null, sources: parseSources(p.src),
         in_calendar: false, cal_migrate: false, hidden_date: isHiddenDate(startDate) ? startDate : null,
       };
     }
@@ -321,7 +322,7 @@
       title, due_date, due_time, due_end_time, time_slot, slot_index, done, color,
       category: p.category || null, location: p.location || null, assignee, priority: p.priority || 'mittel',
       notes: joinChunks(p, 'notes', NOTES_CHUNKS), checklist, recurrence, series_id: p.series_id || null,
-      bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST, order: parseOrder(p.order), planned: p.week === 'true', shop_cat: p.scat || null, sources: parseSources(p.src),
+      bucket: ['inbox', 'todo', 'later'].includes(p.bucket) ? p.bucket : 'todo', list_id: p.list || MAIN_LIST, order: parseOrder(p.order), planned: p.week === 'true', dish_cat: p.dcat || null, shop_cat: p.scat || null, sources: parseSources(p.src),
       in_calendar, cal_migrate: own && p.cal !== 'show' && !in_calendar, hidden_date: null,
     };
   }

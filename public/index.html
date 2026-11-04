@@ -192,6 +192,8 @@
     color: var(--muted); background: var(--chip); border-bottom: 1px solid var(--line); }
   .plan-head.week { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--card)); border-left: 3px solid var(--accent); }
   .plan-head.cat { cursor: pointer; }
+  .plan-head.sub { font-weight: 500; font-size: 12.5px; padding-left: 22px; background: transparent; color: var(--muted); border-top: 1px solid var(--line); }
+  .plan-head.sub .count { background: transparent; }
   .plan-head.unassigned { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--card)); border-left: 3px solid var(--accent); }
   .plan-hint { font-size: 12px; font-weight: 400; color: var(--muted); }
   .badge.cat-pick { border: 1px dashed var(--accent); background: none; color: var(--accent); cursor: pointer; font: inherit; font-size: 11.5px; padding: 1px 8px; }
@@ -1039,6 +1041,7 @@ function openActionMenu(anchor, items) {
 // Speiseplan-Liste: EIN Raster mit zwei Abschnitten „Diese Woche“ und „Katalog“. Die Zeilen lassen sich per Griff innerhalb
 // und über die Abschnittsgrenze hinweg ziehen; wo eine Zeile landet, bestimmt, ob das Gericht auf dem Plan steht
 // (Task.planned). Die Abschnittsüberschriften zählen beim Ziehen als feste Marken (siehe attachSort, itemSel).
+const dishCatOf = (t) => (OfflineLogic.DISH_CATEGORIES.some((c) => c.id === t.dish_cat) ? t.dish_cat : '');
 function planPage(list) {
   const mine = state.tasks.filter((t) => listOf(t) === list.id).sort(manualCmp);
   const week = mine.filter((t) => t.planned);
@@ -1051,7 +1054,16 @@ function planPage(list) {
   for (const t of week) el.append(taskRow(t, { handle: canDrag, plan: 'week' }));
   if (!week.length) el.append(h('div', { class: 'plan-empty' }, 'Noch nichts geplant – zieh ein Gericht hierher oder tippe beim Gericht auf ＋.'));
   el.append(head('Katalog', catalog.length, 'cat', () => { state.catalogOpen = !state.catalogOpen; render(); }));
-  if (state.catalogOpen) for (const t of catalog) el.append(taskRow(t, { handle: canDrag, plan: 'catalog' }));
+  // Der Katalog ist nach Kategorien gegliedert (Schnelles Essen, Aufwändig, …): Gerichte ohne Kategorie stehen direkt unter „Katalog“,
+  // alle Kategorien haben eine eigene Unterüberschrift (auch leere, damit man dorthin ziehen kann).
+  if (state.catalogOpen) {
+    for (const t of catalog.filter((x) => !dishCatOf(x))) el.append(taskRow(t, { handle: canDrag, plan: 'catalog' }));
+    for (const c of OfflineLogic.DISH_CATEGORIES) {
+      const items = catalog.filter((x) => dishCatOf(x) === c.id);
+      el.append(h('div', { class: 'plan-head sub', 'data-section': 'cat', 'data-dcat': c.id }, h('strong', {}, c.label), h('span', { class: 'count' }, String(items.length))));
+      for (const t of items) el.append(taskRow(t, { handle: canDrag, plan: 'catalog' }));
+    }
+  }
   if (canDrag) {
     for (const row of el.querySelectorAll('.task.manual')) {
       attachSort({ item: row, handle: row.querySelector('.row-drag'), container: el, itemSel: '.task.manual, .plan-head', axis: 'y', mode: 'now',
@@ -1095,7 +1107,7 @@ function openRecipeImport(list) {
       const base = Date.now();
       for (let i = fresh.length - 1; i >= 0; i--) {
         const r = fresh[i];
-        await Offline.mutate('task', 'create', { input: { title: r.title, list_id: list.id, bucket: 'todo', notes: r.notes, checklist: r.checklist, created_at: new Date(base - i).toISOString() } });
+        await Offline.mutate('task', 'create', { input: { title: r.title, list_id: list.id, bucket: 'todo', notes: r.notes, checklist: r.checklist, dish_cat: r.dish_cat, created_at: new Date(base - i).toISOString() } });
       }
       $('#dlg').close();
       await reload();
@@ -1106,7 +1118,7 @@ function openRecipeImport(list) {
   };
   form.replaceChildren(
     h('h3', {}, `Rezepte in „${list.name}“ importieren`),
-    h('div', { class: 'hint' }, 'Jedes Rezept beginnt mit „## Name“, danach „Zutaten:“ (eine Zutat pro Zeile mit „- “) und „Anleitung:“. Zeilen zwischen Name und „Zutaten:“ (z. B. Dauer, Portionen) kommen oben in die Notiz.'),
+    h('div', { class: 'hint' }, 'Jedes Rezept beginnt mit „## Name“, danach „Zutaten:“ (eine Zutat pro Zeile mit „- “) und „Anleitung:“. Zeilen zwischen Name und „Zutaten:“ (z. B. Dauer, Portionen) kommen oben in die Notiz. Eine Zeile „Kategorie: Dessert“ legt die Kategorie im Katalog fest (Schnelles Essen, Aufwändig, Frühstück/Brunch, Dessert, Besondere Anlässe).'),
     h('div', { class: 'field' }, area),
     preview, err,
     h('div', { class: 'actions' },
@@ -1120,19 +1132,25 @@ function openRecipeImport(list) {
 
 // Nach dem Ziehen: Abschnitt (vor oder nach der „Katalog“-Überschrift) bestimmt `planned`, die Reihenfolge innerhalb des Abschnitts `order`.
 async function commitPlanOrder(container, movedId) {
-  let section = 'week';
-  const seqs = { week: [], cat: [] };
+  // Bereiche: „Diese Woche“ und je Katalog-Kategorie einer (Schlüssel „week“ bzw. „cat:<id>“, ohne Kategorie „cat:“).
+  let key = 'week';
+  const seqs = new Map();
   for (const child of container.children) {
-    if (child.classList.contains('plan-head')) { section = child.dataset.section === 'cat' ? 'cat' : 'week'; continue; }
-    if (child.classList.contains('manual')) seqs[section].push(child.dataset.id);
+    if (child.classList.contains('plan-head')) { key = child.dataset.section === 'week' ? 'week' : `cat:${child.dataset.dcat || ''}`; continue; }
+    if (child.classList.contains('manual')) { if (!seqs.has(key)) seqs.set(key, []); seqs.get(key).push(child.dataset.id); }
   }
-  const movedSection = seqs.week.includes(movedId) ? 'week' : 'cat';
-  const seq = seqs[movedSection].map((id) => state.tasks.find((t) => t.id === id)).filter(Boolean);
+  const movedKey = [...seqs].find(([, ids]) => ids.includes(movedId))?.[0] ?? 'cat:';
+  const seq = (seqs.get(movedKey) || []).map((id) => state.tasks.find((t) => t.id === id)).filter(Boolean);
   const moved = state.tasks.find((t) => t.id === movedId);
   if (!moved) { render(); return; }
   const patches = new Map(OfflineLogic.computeOrderUpdates(seq, movedId).map((u) => [u.id, { order: u.order }]));
-  const planned = movedSection === 'week';
+  const planned = movedKey === 'week';
   if (!!moved.planned !== planned) patches.set(movedId, { ...(patches.get(movedId) || {}), planned });
+  // Im Katalog entscheidet der Bereich, in dem das Gericht landet, über seine Kategorie.
+  if (!planned) {
+    const dcat = movedKey.slice(4);
+    if (dishCatOf(moved) !== dcat) patches.set(movedId, { ...(patches.get(movedId) || {}), dish_cat: dcat || null });
+  }
   if (!patches.size) { render(); return; }
   try {
     for (const [id, patch] of patches) await Offline.mutate('task', 'update', { id, patch });
@@ -1803,6 +1821,7 @@ function openForm(task) {
   // Status = in welchem Bereich der Startseite der Task liegt (früher nur per Schnellknopf in der Zeile änderbar).
   const listSel = h('select', {}, state.lists.map((l) => h('option', { value: l.id, selected: l.id === placeOf(t) }, l.name)));
   const planBox = h('input', { type: 'checkbox', id: 'optPlanned', checked: !!t.planned });
+  const dishSel = h('select', {}, h('option', { value: '' }, 'Ohne Kategorie'), ...OfflineLogic.DISH_CATEGORIES.map((c) => h('option', { value: c.id, selected: c.id === t.dish_cat }, c.label)));
   // Einkaufskategorie (nur in der Einkaufsliste): „Automatisch“ zeigt, was das Wörterbuch für den Titel erkennt.
   const shopLearned = ShopCategories.buildLearned(state.tasks.filter((x) => shoppingList() && listOf(x) === shoppingList().id));
   const shopSel = h('select', {});
@@ -1859,6 +1878,7 @@ function openForm(task) {
       due_end_time: date.value && time.value && endTime.value ? endTime.value : null,
       assignee: who.get(), priority: prio.value, list_id: listSel.value, bucket: listSel.value === INBOX_LIST ? 'inbox' : (task && placeOf(task) === INBOX_LIST ? 'todo' : (task?.bucket || 'todo')),
       planned: isPlanListId(listSel.value) ? planBox.checked : false,
+      ...(kind === 'plan' ? { dish_cat: dishSel.value || null } : {}),
       ...(shoppingList()?.id === listSel.value ? { shop_cat: shopSel.value || null } : {}),
       in_calendar: !!date.value && inCal.checked, notes: notes.value, checklist: chk.get(), recurrence };
     // Gerichte und Einkäufe brauchen keine Uhrzeit, keinen Kalender und keine Wiederholung, Einkäufe auch kein Datum – was in der
@@ -1893,6 +1913,7 @@ function openForm(task) {
   const recField = field('Wiederholung', recType);
   const prioField = field('Priorität', prio);
   const checkField = field('Checkliste (Enter = nächster Punkt, mehrzeiligen Text einfügen = mehrere Punkte)', chk.el);
+  const dishField = field('Kategorie im Katalog', dishSel);
   const planField = h('label', { for: 'optPlanned', class: 'inline-check', style: 'color:var(--text)' }, planBox, h('span', {}, '🍽 Steht auf dem Plan „Diese Woche“'));
   const shopField = field('Einkaufskategorie', shopSel);
   const sourceHint = (t.sources || []).length ? h('div', { class: 'hint' }, '🍽 Zutat für: ' + t.sources.join(', ')) : null;
@@ -1914,6 +1935,7 @@ function openForm(task) {
     checkField.hidden = k === 'shop';
     if (chk.sendBtn) chk.sendBtn.hidden = k !== 'plan' || !shoppingList();
     planField.hidden = k !== 'plan';
+    dishField.hidden = k !== 'plan';
     shopField.hidden = k !== 'shop';
   };
   listSel.addEventListener('change', syncKind);
@@ -1927,6 +1949,7 @@ function openForm(task) {
     field('Zuständigkeit', who.el),
     moreOpts,
     planField,
+    dishField,
     shopField,
     sourceHint,
     field('Notizen', notes),

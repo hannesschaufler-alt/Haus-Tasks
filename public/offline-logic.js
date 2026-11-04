@@ -17,6 +17,25 @@
   const LATER_LIST = 'spaeter';
   // „Inbox“ ist eine Ansicht, keine echte Liste: ein Task „in der Inbox“ liegt in der Hauptliste mit Status „inbox“.
   const INBOX_LIST = 'inbox';
+  // Kategorien der Gerichte im Katalog einer Speiseplan-Liste (feste Reihenfolge).
+  const DISH_CATEGORIES = [
+    { id: 'schnell', label: 'Schnelles Essen' },
+    { id: 'aufwaendig', label: 'Aufwändig' },
+    { id: 'fruehstueck', label: 'Frühstück/Brunch' },
+    { id: 'dessert', label: 'Dessert' },
+    { id: 'anlass', label: 'Besondere Anlässe' },
+  ];
+  const dishCatOrNull = (v) => (DISH_CATEGORIES.some((c) => c.id === v) ? v : null);
+  // Name (oder Teil davon) → Kategorie-ID, für „Kategorie: …“ im Rezept-Import; null, wenn nichts passt.
+  function matchDishCategory(text) {
+    const fold = (x) => String(x ?? '').toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').trim();
+    const q = fold(text);
+    if (!q) return null;
+    const hit = DISH_CATEGORIES.find((c) => fold(c.label) === q || c.id === q)
+      || DISH_CATEGORIES.find((c) => fold(c.label).includes(q) || q.includes(c.id.slice(0, 6)) || (c.id === 'fruehstueck' && /brunch/.test(q)) || (c.id === 'anlass' && /anlass|fest/.test(q)));
+    return hit ? hit.id : null;
+  }
+
   // Speiseplan-Liste (z. B. „Essen“): oben „Diese Woche“ (Task.planned), unten der „Katalog“. Ausdrücklich per Listen-Einstellung
   // (`plan`), sonst erkennt man sie am Namen (Essen, Speise…, Gericht…, Rezept…). Die Einkaufsliste ist es nie.
   function isPlanList(list) {
@@ -40,7 +59,7 @@
       if (!cur) return;
       const head = cur.head.join('\n').trim();
       const steps = cur.steps.join('\n').trim();
-      recipes.push({ title: cur.title, notes: [head, steps].filter(Boolean).join('\n\n'), checklist: cur.items.map((t) => ({ text: t, done: false })) });
+      recipes.push({ title: cur.title, notes: [head, steps].filter(Boolean).join('\n\n'), checklist: cur.items.map((t) => ({ text: t, done: false })), ...(cur.dish_cat ? { dish_cat: cur.dish_cat } : {}) });
     };
     for (const raw of String(text ?? '').replace(/\r\n?/g, '\n').split('\n')) {
       const line = raw.trim();
@@ -52,7 +71,12 @@
       if (!line) { if (mode === 'steps' && cur.steps.length && cur.steps[cur.steps.length - 1] !== '') cur.steps.push(''); continue; }
       if (mode === 'items') { const item = line.replace(/^[-*•–]\s*/, '').trim(); if (item) cur.items.push(item.slice(0, 200)); }
       else if (mode === 'steps') cur.steps.push(line);
-      else cur.head.push(line);
+      else {
+        // „Kategorie: Dessert“ im Kopf legt die Kategorie im Katalog fest (und steht dann nicht in der Notiz).
+        const cm = line.match(/^kategorie:\s*(.+)$/i);
+        const cat = cm && matchDishCategory(cm[1]);
+        if (cat) cur.dish_cat = cat; else cur.head.push(line);
+      }
     }
     finish();
     return recipes;
@@ -113,6 +137,7 @@
       order: Number.isFinite(input.order) ? input.order : null, // Position bei manueller Sortierung (siehe computeOrderUpdates)
       sources: cleanSources(input.sources), // Einkaufsliste: aus welchen Rezepten die Zutat stammt (Titel)
       shop_cat: typeof input.shop_cat === 'string' && input.shop_cat ? input.shop_cat : null, // Einkaufsliste: manuell gewählte Kategorie (siehe shop-categories.js)
+      dish_cat: dishCatOrNull(input.dish_cat), // Gericht: Kategorie im Katalog (siehe DISH_CATEGORIES)
       planned: !!input.planned, // Speiseplan: steht auf dem Plan „Diese Woche“ (siehe isPlanList)
       // „In Google Kalender anzeigen“: aus, außer der Task hat eine Uhrzeit (ein Termin gehört in den Kalender).
       // Ohne Datum gibt es nichts anzuzeigen. Siehe sync-core.js (HIDDEN_EPOCH).
@@ -369,6 +394,6 @@
   return {
     newId: uid, createTask, updateTask, setDone, deleteTask,
     createCategory, updateCategory, deleteCategory, createLocation, updateLocation, deleteLocation,
-    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, guessListKind, staleDoneIds, isShopMemory, cleanSources, isPlanList, parseRecipes, normalizePlacement, shoppingItems, computeOrderUpdates,
+    ASSIGNEES, BUCKETS, MAIN_LIST, LATER_LIST, INBOX_LIST, DISH_CATEGORIES, matchDishCategory, guessListKind, staleDoneIds, isShopMemory, cleanSources, isPlanList, parseRecipes, normalizePlacement, shoppingItems, computeOrderUpdates,
   };
 });

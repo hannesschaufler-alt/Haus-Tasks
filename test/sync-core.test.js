@@ -1294,3 +1294,21 @@ test('mergeConfigs: Vereinigung nach ID, lokale Fassung gewinnt, Grabsteine verh
   assert.deepStrictEqual(m.categories, { B: '2', A: '1' });
   assert.deepStrictEqual(m.locations.sort(), ['X', 'Y']);
 });
+
+test('Gericht-Kategorie (dish_cat) wandert mit zu Google und zum zweiten Gerät; ohne Kategorie bleibt sie leer', async () => {
+  const a = fakeStore();
+  const b = fakeStore();
+  await createLocal(a, { title: 'Tiramisu', in_calendar: false, list_id: 'essen', dish_cat: 'dessert' });
+  await createLocal(a, { title: 'Nudeln', in_calendar: false, list_id: 'essen' });
+  await S.syncWith(a, remote);
+  assert.strictEqual(evByTitle('Tiramisu').extendedProperties.private.dcat, 'dessert');
+  assert.strictEqual(evByTitle('Nudeln').extendedProperties.private.dcat, '');
+  await S.syncWith(b, remote);
+  const onB = await b.getRawTasks();
+  assert.strictEqual(onB.find((t) => t.title === 'Tiramisu').dish_cat, 'dessert');
+  assert.strictEqual(onB.find((t) => t.title === 'Nudeln').dish_cat, null);
+  await updateLocal(b, onB.find((t) => t.title === 'Nudeln').id, { dish_cat: 'schnell' });
+  await S.syncWith(b, remote);
+  await S.syncWith(a, remote);
+  assert.strictEqual((await a.getRawTasks()).find((t) => t.title === 'Nudeln').dish_cat, 'schnell');
+});

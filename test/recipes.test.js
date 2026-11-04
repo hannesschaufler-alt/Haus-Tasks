@@ -111,3 +111,19 @@ test('Gedächtnis-Einträge der Einkaufsliste (erledigt, manuelle Kategorie, äl
   const ids = L.staleDoneIds([{ id: 'a', title: 'Milch', done: true, done_at: ago(30) }, { id: 'b', title: 'Brot', done: true, done_at: ago(5) }], { now, days: 1 });
   assert.deepStrictEqual(ids, ['a']);
 });
+
+test('Gericht-Kategorien: feste Reihenfolge, ungültige werden verworfen, createTask übernimmt nur gültige', () => {
+  assert.deepStrictEqual(L.DISH_CATEGORIES.map((c) => c.label), ['Schnelles Essen', 'Aufwändig', 'Frühstück/Brunch', 'Dessert', 'Besondere Anlässe']);
+  assert.strictEqual(L.createTask([], { title: 'Pizza', dish_cat: 'dessert' }, {}).task.dish_cat, 'dessert');
+  assert.strictEqual(L.createTask([], { title: 'Pizza', dish_cat: 'quatsch' }, {}).task.dish_cat, null);
+  assert.strictEqual(L.createTask([], { title: 'Pizza' }, {}).task.dish_cat, null);
+});
+
+test('Rezept-Import: „Kategorie: …“ im Kopf legt die Kategorie fest und steht nicht in der Notiz; Unbekanntes bleibt Text', () => {
+  const r = L.parseRecipes('## A\nKategorie: Dessert\n20 Minuten\nZutaten:\n- x\n## B\nKategorie: frühstück\nZutaten:\n- y\n## C\nKategorie: Irgendwas\nZutaten:\n- z\n## D\nKategorie: Besondere Anlässe\nZutaten:\n- w\n## E\nKategorie: aufwändig\nZutaten:\n- v\n## F\nKategorie: Schnelles Essen\nZutaten:\n- u');
+  assert.deepStrictEqual(r.map((x) => x.dish_cat), ['dessert', 'fruehstueck', undefined, 'anlass', 'aufwaendig', 'schnell']);
+  assert.strictEqual(r[0].notes, '20 Minuten');
+  assert.strictEqual(r[2].notes, 'Kategorie: Irgendwas');
+  assert.strictEqual(L.matchDishCategory('Brunch'), 'fruehstueck');
+  assert.strictEqual(L.matchDishCategory('???'), null);
+});
